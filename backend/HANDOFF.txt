@@ -723,8 +723,9 @@ Previously implemented and still relevant:
   C:\Users\user\.codex\skills\copy-editing\SKILL.md
   C:\Users\user\.codex\skills\cro\SKILL.md
 - Created C:\Users\user\coding\projects\lead-pipeline\websites outside the
-  agency-scraper repo, as requested. lead-pipeline itself is not currently a
-  git repository, so these files are not committed by agency-scraper commits.
+  agency-scraper repo (since renamed to backend/), as requested. lead-pipeline
+  itself is now the monorepo root, so these files live under websites/, which
+  keeps its own separate repo and is ignored by the root.
 - Added websites/index.html as the base route page for the future Vercel static
   site. It links only external CSS and JS.
 - Added websites/css/base.css with the animated "preview portal" visual,

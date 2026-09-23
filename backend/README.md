@@ -79,7 +79,7 @@ If your local `.env` contains `MAX_MAPS_RESULTS`, it overrides the code default.
 From WSL/Linux:
 
 ```bash
-cd /mnt/c/Users/user/coding/projects/lead-pipeline/agency-scraper
+cd /mnt/c/Users/user/coding/projects/lead-pipeline/backend
 
 python3 -m venv .venv
 source .venv/bin/activate
@@ -123,7 +123,7 @@ Use two app terminals.
 Terminal 1: Celery worker with logs written to file:
 
 ```bash
-cd /mnt/c/Users/user/coding/projects/lead-pipeline/agency-scraper
+cd /mnt/c/Users/user/coding/projects/lead-pipeline/backend
 ./scripts/start-worker.sh
 ```
 
@@ -136,7 +136,7 @@ tail -f logs/celery.log
 Terminal 2: FastAPI server:
 
 ```bash
-cd /mnt/c/Users/user/coding/projects/lead-pipeline/agency-scraper
+cd /mnt/c/Users/user/coding/projects/lead-pipeline/backend
 ./scripts/start-api.sh
 ```
 

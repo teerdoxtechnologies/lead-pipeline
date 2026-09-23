@@ -1,0 +1,3 @@
+# Normalize line endings: LF everywhere, on every platform.
+# Protects shell scripts and keeps Windows git and WSL git in agreement.
+* text=auto eol=lf

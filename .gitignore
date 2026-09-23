@@ -1,0 +1,31 @@
+# Secrets — never commit these
+.env
+firebase-service-account.json
+credentials.json
+token.json
+
+# Local backups
+*.bundle
+
+# Python (.venv also matches the WSL symlink to the ext4 venv)
+.venv/
+.venv
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Node / frontend
+node_modules/
+dist/
+.next/
+
+# Runtime / local state (volumes on hosts, never git)
+user_data/
+logs/
+*.log
+exports/
+playwright-report/
+
+# Nested repos — each has its own remote
+websites/

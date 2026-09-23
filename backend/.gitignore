@@ -1,0 +1,22 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Environment & Secrets â€” NEVER commit these
+.env
+firebase-service-account.json
+credentials.json
+token.json
+
+# Logs
+logs/
+*.log
+
+# Playwright
+playwright-report/
+
+# Playwright browser profile — machine-local, never commit
+user_data/

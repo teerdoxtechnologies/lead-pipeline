@@ -1,0 +1,2128 @@
+Lead Pipeline / Agency Scraper Handoff
+Last updated: 2026-06-09
+
+Important operating rule
+------------------------
+The user explicitly instructed: never read/check the .env file. Do not open,
+cat, grep, parse, or otherwise inspect .env. Use .env.example, README.md, code,
+runtime-safe config endpoints, logs, and user-provided values instead.
+
+Project overview
+----------------
+This project is a FastAPI + Celery lead-generation pipeline. It scrapes Google
+Maps with Playwright, stores campaigns/leads/reports/drafts in Firebase
+Firestore, optionally analyzes leads with Gemini, optionally creates Gmail
+drafts, optionally syncs records into Notion, and supports ZIP exports.
+
+Primary runtime pieces:
+- FastAPI app: app/main.py
+- Campaign routes: app/routes/scrape.py
+- Lead routes: app/routes/leads.py
+- Report routes: app/routes/analyze.py
+- Email draft routes: app/routes/email.py
+- Export routes: app/routes/export.py
+- Runtime config route: app/routes/config.py
+- Celery tasks: app/workers/tasks.py
+- Celery app: app/workers/celery_app.py
+- Firebase helpers/collection names: app/firebase.py
+- Google Maps scraper: app/services/maps_scraper.py
+- Website scraper: app/services/website_scraper.py
+- Gemini analyzer/email prompts: app/services/gemini_analyzer.py
+- SerpAPI organic evidence service: app/services/serpapi_service.py
+- Notion sync service: app/services/notion_service.py
+- Tests: tests/test_campaign_helpers.py
+
+The user now wants to run the app inside WSL/Linux only. Avoid Windows-specific
+startup logic. The local flow is:
+1. Start Redis inside WSL/Linux:
+   ./scripts/start-redis.sh
+2. Start Celery worker:
+   ./scripts/start-worker.sh
+3. Start FastAPI/docs server:
+   ./scripts/start-api.sh
+
+Use http://127.0.0.1:8000/docs in the browser. Do not use http://0.0.0.0:8000/docs
+in the browser; 0.0.0.0 is a bind address, not a browser destination.
+
+Current known worktree state
+----------------------------
+At the time of this handoff, the active uncommitted work is in the backend and
+test files listed below, plus the usual Playwright/browser runtime profile
+files:
+- app/routes/email.py
+- app/schemas.py
+- app/services/notion_service.py
+- app/services/static_website_generator.py
+- app/workers/tasks.py
+- tests/test_campaign_helpers.py
+- user_data/Default/Cookies
+- user_data/Default/DIPS
+
+These should generally be left alone and not committed unless the user
+explicitly asks.
+
+Major changes already implemented
+---------------------------------
+Recent commits, newest first:
+- 6ae46dd Add search evidence cache admin tools
+- 8f7b2e5 Document no-website evidence guardrails
+- 52343b3 Add no-website search claim guardrails
+- ea63295 Add search evidence inspection endpoint
+- 2ff2ba0 Enrich and cache search evidence
+- 1c7b5a5 Filter search evidence business URLs
+- c7ae7ff Store business URLs in search evidence top results
+- e126de8 Optimize Notion backfill syncing
+- 1b71d89 Add campaign search evidence endpoint
+- 16fd856 Sync search evidence to Notion
+- a8e471e Use SerpAPI evidence for no-website reports
+- aa5daef Improve scraper observability and controls
+- 712fbaa Constrain direct export endpoints
+- 30f746d Expire background exports after download
+- fbe1f9a Run heavy operations as background jobs
+- 7f962ae Retry transient Notion sync failures
+- 73d780f Add campaign helper tests
+- 0833f5a Add optional global lead dedupe
+- cb21c65 Add Gmail draft cleanup policy
+- 12d1962 Update existing Notion pages during sync
+- a24a201 Require confirmation for campaign deletes
+- 639b987 Add campaign cleanup preview
+- 7b38214 Add campaign list filters
+- 9f7ec9c Add campaign cancellation endpoint
+- e05c9d1 Add Notion backfill endpoint
+- 3d6a2b0 Add all-campaign ZIP export
+- 06a28b1 Add campaign ZIP export
+- a85df3a Track campaign run timestamps
+- ee7cabb Document campaign cleanup endpoints
+- 5762be8 Add campaign archive and delete endpoints
+
+Note: verify exact hashes with git log if needed. The repository history is the
+source of truth.
+
+Google Maps scraper work
+------------------------
+The original problem was that the Google Maps scraper returned too few results
+and many cards failed extraction. We improved the scraper and campaign behavior:
+
+- Maximum Maps scrape limit is now 500 by default.
+- Campaign creation supports per-campaign max_results and dedupe_enabled.
+- Google Maps scraper was hardened to reduce re-clicking and repeated card
+  extraction problems.
+- Maps metrics are stored on campaign status and include fields such as:
+  businesses_persisted, global_duplicates_skipped, max_maps_results_used.
+- Missing-website leads get a quality flag:
+  {"missing_website": true/false}
+- Scrape cancellation checks were added inside the scroll/extract loop.
+- Existing no-website leads can be repaired in place with:
+  POST /api/campaigns/{campaign_id}/repair-websites
+  This revisits each lead's saved Google Maps URL, re-reads stabilized detail
+  rows, and updates website/has_website/missing_website without creating
+  duplicate leads.
+- By default, repaired leads are reset to scrape_status=pending so later resume
+  runs process them through the website track. Use
+  ?reset_status=false to only update website fields.
+- Global lead dedupe can be enabled/disabled.
+
+Relevant files:
+- app/services/maps_scraper.py
+- app/workers/tasks.py
+- app/schemas.py
+- app/routes/scrape.py
+
+AI processing toggle
+--------------------
+The user wanted to pause the AI part so scraper runs do not consume AI tokens.
+The pipeline supports AI_PROCESSING_ENABLED. When false, full runs still process
+has-website leads with deterministic website appraisal and Gmail drafts, but no
+AI rewrite is used and no-website leads are left for the generated-website
+publish workflow.
+
+Do not inspect .env to check this value. Use the runtime config endpoint:
+GET /api/config/runtime
+
+Notion integration
+------------------
+Notion sync is optional. The app syncs:
+- Campaign
+- Lead
+- Report
+- Outreach
+- Search Evidence
+
+Expected existing Notion databases:
+- campaign
+- lead
+- report
+- outreach
+- Search Evidence
+
+All title property names are assumed to be "Name", based on user confirmation.
+
+Configured relations the user created:
+- Lead: Campaign, Outreach, Report
+- Campaign: Lead
+- Report: Lead, Outreach
+- Outreach: Lead, Report
+- Search Evidence: Campaign
+
+Environment values documented in .env.example include:
+- NOTION_API_KEY
+- NOTION_CAMPAIGNS_DB_ID
+- NOTION_LEADS_DB_ID
+- NOTION_REPORTS_DB_ID
+- NOTION_OUTREACH_DB_ID
+- NOTION_SEARCH_EVIDENCE_DB_ID
+- NOTION_REQUEST_DELAY_SECONDS
+
+Do not read .env to verify these. The runtime config endpoint safely shows
+whether the DB ids are configured without exposing secrets.
+
+Notion sync behavior:
+- app/services/notion_service.py writes only properties that exist on the target
+  database.
+- It now also checks property types. If a property exists but has the wrong
+  type, it logs a warning and skips that property instead of failing the whole
+  page.
+- Lead sync now supports both lead database URL column names: "Generated live
+  url" and the older "Generated website url". It writes to whichever one exists
+  in the target schema, and it can pull either alias back into Firestore as
+  generated_website_url.
+- Notion 400 responses are logged with the response body to reveal the exact
+  rejected property.
+- Transient Notion errors are retried.
+- Sync request pacing is controlled by NOTION_REQUEST_DELAY_SECONDS, default
+  0.35 seconds.
+
+Backfill endpoint:
+POST /api/campaigns/{campaign_id}/sync-notion
+
+Default behavior now creates only missing Notion pages and skips records that
+already have stored Notion page ids. This avoids re-patching every lead on every
+backfill run.
+
+Force behavior:
+POST /api/campaigns/{campaign_id}/sync-notion?force=true
+
+This updates existing Notion pages too, preserving the old repair/update-all
+behavior.
+
+Search Evidence Notion behavior:
+- One Notion page per campaign query.
+- Stored on campaign as search_evidence_notion_page_id.
+- Top Results stores only the top three business-owned organic URLs after
+  filtering out directories/social/forums/non-business sites.
+- Raw JSON is no longer synced to Notion. The broader evidence payload remains
+  in Firestore; Notion keeps only the human-checkable search summary fields.
+
+If Search Evidence does not sync:
+- Check logs/celery.log for Notion response body.
+- A 404 on GET /databases usually means wrong DB id or database not shared with
+  integration.
+- A 400 on POST /pages usually means a property type mismatch. Current code now
+  logs and skips mismatched properties where possible.
+
+Generated website and outreach flow
+-----------------------------------
+The static website and outreach flow has been split into two lanes:
+
+- `needs_website=true` is still the gate for website generation.
+- `POST /api/campaigns/{campaign_id}/websites/build` only creates previews.
+- `POST /api/campaigns/{campaign_id}/websites/publish` commits/pushes previews,
+  then marks the leads as hosted and writes the live URL back to Firestore and
+  Notion.
+- When a lead already has a draft preview directory and is rebuilt, the old
+  preview directory is deleted first so stale draft sites do not pile up.
+- Website-lead audit outreach still comes from the existing website analysis
+  path, but the prompt now includes browser-quality signals so the email is more
+  business-goals focused.
+- Generated-site outreach for no-website leads is now explicit and only happens
+  when there is a hosted/generated live URL.
+- New explicit outreach trigger:
+  `POST /api/campaigns/{campaign_id}/outreach/drafts`
+- Publish also triggers the generated-site outreach draft job so the email can
+  reference the live generated site once hosting is complete.
+
+Testing notes for this change:
+- Focused regression tests were added for:
+  - Notion generated-live-url alias extraction and syncing
+  - generated preview directory cleanup
+- Browser-quality scoring helpers were also covered with unit tests.
+- The focused unittest suite passed:
+  `python -m unittest tests.test_campaign_helpers`
+
+SerpAPI / organic search evidence
+---------------------------------
+The app no longer uses Google Custom Search for this path. It uses SerpAPI.
+
+Endpoint used by app:
+https://serpapi.com/search.json
+
+Params:
+- engine=google
+- q="{niche} in {location}"
+- api_key=SERPAPI_API_KEY
+- num=SERPAPI_RESULTS_LIMIT
+- hl=en
+- gl=us
+
+Relevant env values in .env.example:
+- SERPAPI_API_KEY
+- SERPAPI_RESULTS_LIMIT=10
+- SEARCH_EVIDENCE_STALE_AFTER_DAYS=30
+
+Search evidence service:
+- app/services/serpapi_service.py
+
+Evidence payload includes:
+- provider
+- query
+- normalized_query
+- generated_at
+- last_search_evidence_refreshed_at
+- search_evidence_age_days
+- organic_results
+- business_results
+- organic_results_count
+- business_results_count
+- has_useful_business_results
+- cache_hit
+- source
+
+Business-owned filtering:
+The app filters out domains such as Google, Yelp, Angi, Thumbtack, BBB,
+YellowPages, Facebook, Instagram, LinkedIn, Reddit, Twitter, X, TikTok, YouTube,
+MapQuest, TripAdvisor, Nextdoor, Wikipedia, Foursquare, Trustpilot, etc.
+
+The filter uses improved root-domain normalization so subdomains of blocked
+domains are also excluded.
+
+Confidence scoring:
+Business-owned organic results get confidence_score using signals including:
+- not a blocked directory/social/forum domain
+- organic result position
+- niche relevance in title/snippet/domain
+- location relevance in title/snippet/domain
+- HTTPS URL
+
+Only business-owned results with sufficient confidence are stored in
+business_results.
+
+Search evidence cache:
+- Firestore collection: search_evidence_cache
+- Cache key: normalized "{niche} in {location}"
+- Repeated campaigns with the same normalized query can reuse cached evidence
+  instead of calling SerpAPI again.
+
+Source logging:
+app/workers/tasks.py logs structured extra fields with event:
+- search_evidence_resolved
+- search_evidence_stale
+
+source will be one of:
+- campaign
+- cache
+- serpapi
+
+This is useful in Celery logs to see whether a run reused campaign evidence,
+reused shared cache, or called SerpAPI.
+
+Search evidence endpoints
+-------------------------
+Inspect stored evidence without calling SerpAPI:
+GET /api/campaigns/{campaign_id}/search-evidence
+
+Run or reuse evidence:
+POST /api/campaigns/{campaign_id}/search-evidence
+
+Force a new SerpAPI refresh:
+POST /api/campaigns/{campaign_id}/search-evidence?force=true
+
+Refresh only if stale:
+POST /api/campaigns/{campaign_id}/search-evidence?refresh_if_stale=true
+
+Admin cache clear endpoint:
+DELETE /api/admin/search-evidence-cache
+
+Required query param:
+confirm=CLEAR_SEARCH_EVIDENCE_CACHE
+
+Clear one entry by niche/location:
+DELETE /api/admin/search-evidence-cache?confirm=CLEAR_SEARCH_EVIDENCE_CACHE&niche=cleaners&location=atlanta
+
+Clear one entry by exact cache key:
+DELETE /api/admin/search-evidence-cache?confirm=CLEAR_SEARCH_EVIDENCE_CACHE&cache_key=cleaners in atlanta
+
+Clear all shared cache entries:
+DELETE /api/admin/search-evidence-cache?confirm=CLEAR_SEARCH_EVIDENCE_CACHE
+
+No-website appraisal path
+-------------------------
+Previous behavior scraped Google Maps again to find competitors and then scraped
+competitor websites per no-website lead. The user questioned this as overhead,
+and we replaced that flow.
+
+Current no-website path:
+- Uses campaign-level SerpAPI organic evidence.
+- Calls SerpAPI once per campaign query context, then reuses it for all
+  no-website leads.
+- Does not scrape Google Maps again for competitors.
+- Does not scrape competitor websites.
+- Uses deterministic no-website appraisal and template-based email drafts from
+  app/services/no_website_appraisal.py.
+- Optional AI polish is controlled by OUTREACH_AI_REWRITE_ENABLED. When false,
+  no-website outreach copy is fully template-based.
+
+Relevant files:
+- app/workers/tasks.py
+- app/services/no_website_appraisal.py
+- app/services/serpapi_service.py
+
+Claim guardrails:
+No-website appraisal now uses explicit allowed/disallowed claims derived from
+evidence:
+- Allowed: say business-owned websites appear in organic Google results for the
+  checked query, when such results exist.
+- Allowed: say a no-website business lacks an owned page that can rank
+  organically or convert searchers.
+- Not allowed: claim anything about Google Ads, Maps rankings, traffic volume,
+  certain revenue, or website quality not supported by snippets.
+
+Fallback behavior:
+If no useful business-owned organic URLs remain after filtering, the AI should
+avoid naming competitors and focus on the absence of an owned website that can
+rank organically.
+
+Exports
+-------
+Exports were moved to background jobs to avoid slow direct responses for large
+campaigns.
+
+Background export endpoints:
+- POST /api/exports/campaigns
+- GET /api/exports/{export_id}/status
+- GET /api/exports/{export_id}/download
+
+Exports are ZIP files. For all-campaign export, the ZIP contains one folder per
+campaign, and each campaign folder contains CSV and JSON files with metadata.
+
+Export file behavior:
+- Exports are written temporarily under exports/.
+- Export downloads are deleted after download.
+- Undownloaded exports expire after EXPORT_RETENTION_HOURS, default 24.
+- User-facing message says to download immediately.
+
+Direct export:
+- GET /api/campaigns/{campaign_id}/export.zip
+- Limited by DIRECT_EXPORT_MAX_LEADS, default 100.
+- If a campaign exceeds the limit, the endpoint aborts and the user should use
+  the background export flow.
+
+The direct all-campaign export endpoint was removed.
+
+Campaign cleanup
+----------------
+Added:
+- Archive one campaign
+- Archive selected campaigns
+- Archive all campaigns
+- Delete one campaign
+- Delete selected campaigns
+- Delete all campaigns
+- Cleanup preview endpoint
+- Campaign cancellation endpoint
+
+Deletes require confirm token:
+DELETE_CONFIRMATION = DELETE_CAMPAIGNS
+
+Notion pages are archived because public Notion API archives pages rather than
+permanently deleting them.
+
+Gmail draft cleanup:
+Gmail draft deletion on campaign delete is optional via
+GMAIL_DELETE_DRAFTS_ON_CAMPAIGN_DELETE.
+
+Run commands
+------------
+WSL/Linux venv activation:
+source .venv/bin/activate
+
+Typical local commands:
+
+Start Redis:
+./scripts/start-redis.sh
+
+Start Celery from project root:
+./scripts/start-worker.sh
+
+Start FastAPI/docs:
+./scripts/start-api.sh
+
+Open docs:
+http://127.0.0.1:8000/docs
+
+Run tests:
+python -m unittest discover -s tests
+
+Compile changed modules:
+python -m compileall app tests
+
+Check safe runtime config:
+GET /api/config/runtime
+
+Logs
+----
+Celery logs are expected at:
+logs/celery.log
+
+Useful searches:
+rg -n "campaign_id_here|search_evidence|Search evidence|Notion|SerpAPI|serpapi|search_evidence_synced" logs/celery.log
+
+Known caveats and follow-ups
+----------------------------
+1. Search Evidence Notion "Top Results" is a text field containing URLs, not a
+   relation to a separate results database. The user considered one-row-per-
+   result auditing but did not choose it.
+
+2. Search evidence cache is shared by normalized niche/location. This is
+   intentional to save SerpAPI calls across repeated campaigns, but clearing the
+   cache may be needed when a niche/location query should be refreshed globally.
+
+3. GET /campaigns/{id}/search-evidence does not call SerpAPI. It only reads
+   campaign-stored evidence.
+
+4. POST /campaigns/{id}/search-evidence without force reuses campaign evidence
+   or shared cache where possible.
+
+5. POST /campaigns/{id}/search-evidence?force=true calls SerpAPI and overwrites
+   stored campaign evidence and shared cache.
+
+6. POST /campaigns/{id}/search-evidence?refresh_if_stale=true refreshes only if
+   campaign/cache evidence is older than SEARCH_EVIDENCE_STALE_AFTER_DAYS.
+
+7. Tests currently focus on helpers rather than full end-to-end API tests. Main
+   test file: tests/test_campaign_helpers.py.
+
+8. Some files contain pre-existing mojibake in prompt strings, such as encoded
+   em dashes. Do not do broad formatting cleanup unless the user asks.
+
+9. Do not revert or delete user_data/Default runtime files unless explicitly
+   requested.
+
+10. After code or env changes, restart both FastAPI and Celery. Celery will not
+    pick up new code/env values until restarted.
+
+Where we stopped
+----------------
+The latest implementation task split generated websites into preview and
+hosted states.
+
+Implemented in current working tree:
+- FastAPI now mounts the sibling websites directory at:
+  /generated-sites
+  This serves local generated previews, for example:
+  /generated-sites/atlanta-eco-cleaners/
+- POST /api/campaigns/{campaign_id}/websites/build is now preview-only.
+  It does not commit, push, host, or write generated_website_url.
+- WebsiteBuildRequest now exposes only:
+  lead_ids
+  pull_from_notion=true
+  sync_to_notion=true
+- Build still pulls latest Notion Lead fields first by default, including
+  needs_website, then builds leads where needs_website=true.
+- Build writes:
+  generated_website_slug
+  generated_website_path
+  generated_website_status="preview"
+  generated_website_files
+  generated_website_url=None
+- Build syncs the Lead back to Notion by default, but no longer writes
+  generated website status or hosted-at properties. It does not write a hosted
+  URL.
+- GET /api/leads/{lead_id}/website-preview returns the local preview URL. The
+  preview URL is computed on demand and is not stored in Firestore or Notion.
+  Preview URLs now point to the landing page/root and include the FastAPI
+  request host/port, for example:
+  http://localhost:8000/preview/white-rabbit-cleaning-llc/
+- Build job results also include full preview_url values. The build route
+  passes request.base_url to the Celery task so the returned URLs use the same
+  host and port that FastAPI is running on.
+- Added POST /api/campaigns/{campaign_id}/websites/publish.
+  It is now the direct per-lead workflow: pulls Notion edits, finds leads with
+  needs_website=true and an email, generates missing static website files,
+  commits and pushes the websites repo, then only if push succeeds sets:
+  generated_website_status="hosted"
+  generated_website_url=<BASE_URL>/preview/<slug>/
+  generated_website_hosted_at=<UTC ISO timestamp>
+- Publish syncs only the client-facing generated lead URL back to Notion using:
+  Generated website url
+- `Generated Website Status` and `Generated Website Hosted At` were removed
+  from Notion sync after the user deleted those properties.
+- If publish fails, the reason is logged and returned in the Celery job result.
+- Publish request exposes lead_ids and commit_message. There is no commit/push
+  toggle; publish always commits and pushes.
+- If commit_message is omitted, the generated git commit has a default subject
+  and a body listing the business names and slugs that were published.
+- README.md documents the preview/publish workflow and the exact Notion
+  property names.
+- Important: BASE_URL must be configured before
+  publishing if the user wants live URLs in Firestore/Notion. Do not read .env.
+
+Current verification still needed after this implementation:
+- python -m compileall app tests
+- git diff --check
+
+Previously completed task:
+The prior task made the website build endpoint self-sync with Notion.
+
+Implemented:
+- POST /api/campaigns/{campaign_id}/websites/build pulls latest Notion Lead
+  fields before selecting leads to build, using the existing
+  _pull_leads_from_notion helper. This means needs_website checked in Notion
+  can be picked up directly by the build job.
+- Build task result/stats include pulled_from_notion, notion_synced, and
+  notion_skipped counts.
+
+Previously completed task:
+The earlier task made Notion sync bidirectional for editable Lead fields.
+
+Implemented:
+- Existing POST /api/campaigns/{campaign_id}/sync-notion now accepts:
+  pull_from_notion=true by default.
+- The Celery task tasks.sync_campaign_notion now accepts:
+  campaign_id, force=false, pull_from_notion=true.
+- Before pushing Firestore data back to Notion, sync-notion reads existing
+  Notion Lead pages that have stored notion_page_id values and imports populated
+  editable fields into Firestore.
+- Pulled Lead fields:
+  Name -> business_name
+  Address -> address
+  Phone -> phone
+  Website -> website, website_domain, has_website=true, missing_website=false
+  Google Maps URL -> google_maps_url
+  Status -> scrape_status, only when it matches a known app status
+  Email/Emails -> emails, has_email=true
+  needs_website -> needs_website
+- Pulling is conservative: blank Notion fields do not clear Firestore values.
+  This avoids wiping app data when optional Notion columns exist but are empty.
+- Notion lead push now also writes optional Email, Emails, and needs_website
+  properties when the user's Lead database has them.
+- Notion lead push now writes optional "Generated website url" as a URL
+  property when the user's Lead database has it. This uses the lead's
+  generated_website_url value, which is only populated when
+  BASE_URL is configured before website generation.
+- Important: tell the user to set BASE_URL in .env
+  when they want live Vercel URLs stored on generated leads. Do not read .env.
+- NotionBackfillResponse now includes leads_pulled_from_notion.
+- README.md documents the pull behavior, the pull_from_notion=false opt-out,
+  and the optional Lead Email/Emails/needs_website properties.
+- tests/test_campaign_helpers.py includes coverage for parsing Email/Emails and
+  needs_website values from Notion Lead properties.
+- Static website eligibility now requires only needs_website=true. Email,
+  existing website, phone, and address are used when present but do not decide
+  whether a site is built.
+
+Current verification still needed after this implementation:
+- python -m compileall app tests
+- python -m unittest discover -s tests if the user approves settings/.env being
+  loaded by existing tests. Do not read/check .env manually.
+
+Previously completed task:
+The prior task added the first version of the static website generation
+workflow for businesses marked with needs_website=true.
+
+Implemented:
+- Added app/services/static_website_generator.py. It generates deterministic,
+  pure static HTML/CSS/JS websites from existing Firestore lead and campaign
+  data. It does not call Gemini, SerpAPI, Gmail, or any paid/external API.
+- Each generated business gets its own directory under the sibling websites
+  repo configured by GENERATED_WEBSITES_ROOT, default ../websites.
+- Each generated site contains:
+  index.html
+  contact.html
+  services.html
+  css/landing.css
+  css/contact.css
+  css/services.css
+  js/site.js
+- Generated pages use external CSS and JavaScript only. No framework is used.
+- Added Settings values:
+  GENERATED_WEBSITES_ROOT=../websites
+  BASE_URL=
+- Updated .env.example with those values. Do not read the user's .env.
+- Added safe runtime config output under /api/config/runtime:
+  generated_websites.root
+  base_url_configured
+  base_url
+- Added schemas:
+  WebsiteBuildRequest
+  WebsiteCandidateResponse
+- Added app/routes/websites.py and registered it in app/main.py.
+- New endpoint:
+  GET /api/campaigns/{campaign_id}/website-candidates
+  Lists campaign leads that have needs_website=true and can receive generated
+  static websites.
+- New endpoint:
+  POST /api/campaigns/{campaign_id}/websites/build
+  Queues a Celery job to generate local static website previews. Body supports:
+  lead_ids: optional selected lead ids
+  pull_from_notion: pull latest Notion lead flags before build
+  sync_to_notion: sync preview status back to Notion after build
+- Added Celery task:
+  tasks.build_campaign_static_websites
+  It updates each generated lead with:
+  generated_website_slug
+  generated_website_path
+  generated_website_url=None
+  generated_website_status=preview
+  generated_website_files
+- The task records campaign stats.generated_websites with checked/generated/
+  skipped/failed counts and updates campaign progress.
+- No-website email generation now accepts generated_website_url and includes it
+  in the Gemini prompt when available, so drafts can reference the prepared
+  preview site. The email_draft document stores generated_website_url too.
+- Added unit coverage for static website eligibility and business-name slugging.
+- README.md documents the workflow, endpoints, env values, generated file
+  structure, and optional commit/push behavior.
+
+Current verification still needed after this implementation:
+- python -m compileall app tests
+- Unit tests if acceptable, but be careful: some existing tests call
+  get_settings(), which may load .env. The user explicitly said never inspect
+  .env, so do not run tests that load settings unless the user approves that
+  implication.
+
+Previously completed task:
+The prior task removed explicit "404" wording from the generated websites base
+page copy.
+
+Implemented:
+- Updated C:\Users\user\coding\projects\lead-pipeline\websites\index.html and
+  websites\js\base.js to remove direct "404" language.
+- Supporting copy now says:
+  "This is more of a politely locked side door."
+- Verified websites\index.html and websites\js\base.js contain no "404".
+- Rechecked index.html for inline style tags, style attributes, inline event
+  handlers, and internal script blocks; no matches were found.
+
+Previously implemented and still relevant:
+- Revised C:\Users\user\coding\projects\lead-pipeline\websites\index.html,
+  websites\css\base.css, and websites\js\base.js.
+- Replaced the previous preview portal/theater animation because the user did
+  not like it. New animation is a "signal/control-room" scene with a tilted map,
+  floating windows, console screen, scanning beam, pulsing nodes, and keys.
+- Added automatic light/dark mode using CSS color-scheme and
+  @media (prefers-color-scheme: dark). There is no manual theme switch.
+- Updated headline to a witty wrong-door tone:
+  "Uh oh. You are not supposed to be here."
+- Updated helpful text to tell users the full preview link should include a
+  business slug such as /business-name/.
+- Updated the browser title to "Wrong Door, Nice Console" and changed the
+  eyebrow to "Preview entrance".
+- Loaded skill guidance from:
+  C:\Users\user\.codex\skills\frontend-design\SKILL.md
+  C:\Users\user\.codex\skills\copywriting\SKILL.md
+  C:\Users\user\.codex\skills\copy-editing\SKILL.md
+  C:\Users\user\.codex\skills\cro\SKILL.md
+- Created C:\Users\user\coding\projects\lead-pipeline\websites outside the
+  agency-scraper repo, as requested. lead-pipeline itself is not currently a
+  git repository, so these files are not committed by agency-scraper commits.
+- Added websites/index.html as the base route page for the future Vercel static
+  site. It links only external CSS and JS.
+- Added websites/css/base.css with the animated "preview portal" visual,
+  responsive layout, reduced-motion handling, and no inline/internal CSS.
+- Added websites/js/base.js with randomized witty text and pointer-reactive
+  animation variables. No inline/internal JavaScript is used.
+- Base page copy currently says:
+  "This page is the lobby, not the suite."
+  with a helpful note that a full preview link should include /business-name/.
+- Verified index.html has no inline style, style tag, inline event handler, or
+  internal script block using Select-String.
+- Installed GitHub skill coreyhaines31/marketingskills from path
+  skills/copy-editing into:
+  C:\Users\user\.codex\skills\copy-editing
+- Installed GitHub skill squirrelscan/skills from path audit-website into:
+  C:\Users\user\.codex\skills\audit-website
+  The user listed this URL twice; it was installed once.
+- Installed GitHub skill coreyhaines31/marketingskills from path
+  skills/ai-seo into:
+  C:\Users\user\.codex\skills\ai-seo
+- Installed GitHub skill coreyhaines31/marketingskills from path
+  skills/seo-audit into:
+  C:\Users\user\.codex\skills\seo-audit
+- Installed GitHub skill anthropics/claude-code from path
+  plugins/frontend-design/skills/frontend-design into:
+  C:\Users\user\.codex\skills\frontend-design
+- Installed GitHub skill ReScienceLab/opc-skills from path skills/seo-geo
+  into:
+  C:\Users\user\.codex\skills\seo-geo
+- User must restart Codex before these skills are available in future sessions.
+- Installed GitHub skill coreyhaines31/marketingskills from path
+  skills/copywriting into:
+  C:\Users\user\.codex\skills\copywriting
+- User must restart Codex before the copywriting skill is available in future
+  sessions.
+- Installed GitHub skill coreyhaines31/marketingskills from path skills/cro
+  into:
+  C:\Users\user\.codex\skills\cro
+- User must restart Codex before the cro skill is available in future sessions.
+- Installed GitHub skill Nutlope/hallmark from path skills/hallmark into:
+  C:\Users\user\.codex\skills\hallmark
+- User must restart Codex before the hallmark skill is available in future
+  sessions.
+- app/services/notion_service.py _properties() now logs a warning when a
+  property has a value to sync but the target Notion database does not contain
+  that exact property name. Previously it only warned on wrong property type.
+- tests/test_campaign_helpers.py covers the missing-column warning behavior.
+- app/routes/scrape.py _sync_campaign_to_notion now logs campaign sync start,
+  campaign page sync/skip, search evidence sync/skip, each lead sync/skip with
+  lead id and index, report sync/skip, outreach sync/skip, and final totals.
+- app/routes/scrape.py _sync_campaign_to_notion now loads campaign leads before
+  syncing the Campaign page and calls _campaign_with_lead_derived_maps_stats().
+- _campaign_with_lead_derived_maps_stats fills missing stats.maps values from
+  existing leads: businesses_persisted, with_website, and missing_website. It
+  also fills stats.total when missing.
+- When force-sync updates the Campaign page, it writes the enriched stats back
+  to Firestore so future syncs/status calls have the derived values.
+- README.md documents that sync-notion?force=true can populate these older
+  campaign counts without re-scraping.
+- tests/test_campaign_helpers.py covers deriving campaign Maps stats from
+  existing leads.
+- app/services/notion_service.py no longer syncs Parser Anomalies or Invalid
+  Address Domains to the Campaign database.
+- README.md no longer recommends Parser Anomalies or Invalid Address Domains as
+  Campaign database properties.
+- app/workers/tasks.py validates each scraped business before saving it as a
+  lead. It normalizes bare domains to https:// URLs, prevents domain-looking
+  values from being saved as address, moves address domains into website when
+  website is empty, and keeps website/has_website/missing_website/website_domain
+  consistent.
+- app/workers/tasks.py records extra stats.maps counters:
+  with_website, leads_validated, websites_normalized, invalid_address_domains,
+  and parser_anomalies, alongside existing Maps scrape metrics.
+- app/routes/scrape.py GET /api/campaigns/{campaign_id}/status now returns
+  with_website, missing_website, parser_anomalies, and
+  invalid_address_domains as top-level status fields in addition to the full
+  maps object.
+- app/schemas.py CampaignStats now includes maps so campaign responses can
+  expose stored Maps metrics.
+- app/services/notion_service.py sync_campaign writes optional Campaign DB
+  columns when present: Businesses Found, Businesses Persisted, With Website,
+  Missing Website, Cards Seen, and Stop Reason.
+- README.md documents the new Notion campaign properties and scrape metrics.
+- tests/test_campaign_helpers.py includes regression coverage for lead
+  normalization, including the address-domain-to-website case.
+- app/services/maps_scraper.py repair_google_maps_listing_details now logs each
+  lead before opening its saved Google Maps URL, including lead id, index/total,
+  and business name. After extraction it logs website/address/phone found, or a
+  missing Maps URL skip.
+- app/workers/tasks.py repair_campaign_websites now logs each repaired item as
+  it applies the result to Firestore: failed, no website found, repaired, and
+  Notion sync page id when applicable.
+- app/services/maps_scraper.py fixed the parser bug where listings with no
+  address row could save the website domain into the lead address field.
+- app/services/maps_scraper.py now classifies each Io6YTe detail row by
+  content instead of assuming the first row is always an address. Domains are
+  treated as websites, booking/directory domains are not treated as addresses,
+  and the address remains null when Maps has no address row.
+- tests/test_maps_scraper.py has a regression test for the no-address case:
+  ["peachstatecleaning.com", "(404) 555-1234", "Peach State Cleaning"] should
+  produce website=peachstatecleaning.com and address=None.
+- app/workers/tasks.py repair_campaign_websites now clears an existing address
+  value if that old address is actually a domain and the repair run finds a
+  website. It still updates existing lead documents only; it does not create
+  duplicates.
+- README.md documents that POST /api/campaigns/{campaign_id}/repair-websites
+  also fixes the older address=website bad-data case.
+- app/services/maps_scraper.py has repair_google_maps_listing_details(), which
+  revisits saved Google Maps URLs in one browser context and re-extracts the
+  same stabilized Io6YTe detail rows used by the main scraper.
+- app/workers/tasks.py has a Celery task repair_campaign_websites that queries
+  existing leads for a campaign where has_website=false, revisits their saved
+  google_maps_url, and updates only the existing lead documents when a real
+  website is found.
+- app/routes/scrape.py exposes:
+  POST /api/campaigns/{campaign_id}/repair-websites
+  Query param reset_status defaults to true. When true, repaired leads are set
+  to scrape_status=pending so resume can process the website path.
+- README.md documents the endpoint.
+
+Latest commit:
+Refine cleaning website template
+
+Cleaning template refinement after user review:
+- User added image.png under:
+  C:\Users\user\coding\projects\lead-pipeline\websites\cleaning_template
+  This reference confirms the Services area should be a bold full-width band
+  with four service items arranged two per row on larger screens.
+- app/services/static_website_generator.py was revised again:
+  - Hero copy is centered, CTA buttons are larger, and the text pills under the
+    CTA buttons were removed.
+  - The word "reset" was removed from generated cleaning copy except where it is
+    not part of the cleaning-template persuasive copy.
+  - Landing copy now uses "professionals" where appropriate and removes the
+    phrase "focused on the rooms people use every day".
+  - Services headline now includes "we offer"; service cards are two per row on
+    larger screens and collapse cleanly on mobile.
+  - Why-choose-us copy now compares against other cleaning companies by focusing
+    on stable standards, clear scope, and careful professionals.
+  - How-it-works is now a process track with SVG icons, a connector line, hover
+    animation, and stronger contrast.
+  - Quote section has a full-width centered headline and centered form. The copy
+    focuses on response expectations and useful quote details.
+  - Testimonials section now renders eight Google Maps review placeholders, each
+    with avatar placeholder, reviewer name, and a "See review" link.
+  - FAQ was rewritten to remove the standard/deep-clean question and answer more
+    practical booking/process objections.
+  - Gallery now renders twelve frames using the placeholder image in a more
+    varied masonry layout.
+  - Final CTA now speaks to the customer's feeling after coming home to a clean
+    space.
+- README.md was updated so the generated static website section describes the
+  newer cleaning template: centered hero, two-column services, animated process,
+  centered quote form, eight review placeholders, and twelve-frame gallery.
+- Verification performed:
+  - python -m compileall app tests
+  - python -m unittest tests.test_campaign_helpers.CampaignHelperTests.test_static_website_logo_removes_generic_words tests.test_campaign_helpers.CampaignHelperTests.test_static_website_preview_url_points_to_landing
+  - git diff --check
+  - Generated HTML sanity checks: one H1 per page, all images have alt text,
+    form labels match controls, skip link present, landing has 8 review cards
+    and 12 gallery frames.
+  - Manual token contrast check for light and dark theme pairs; all checked
+    pairs passed WCAG AA 4.5:1.
+
+Cleaning template correction pass:
+- User requested a tighter hero, no why-choose-us section, better service/form
+  details, stronger review presentation, more conversational FAQ answers,
+  gallery layout bias changes, final CTA cleanup, and a more logo-like text mark.
+- app/services/static_website_generator.py changes:
+  - Hero eyebrow became a rating placeholder: five stars plus "4.9 rating
+    placeholder" for future Google review data.
+  - Hero headline no longer uses home/weekend-specific language and is smaller
+    so it should stay around two lines on larger screens.
+  - Removed the why-choose-us section from the landing page.
+  - Added Commercial cleaning to the landing service list and kept service
+    cards in a two-column layout on larger screens.
+  - Service CTAs now sit beneath each service body copy rather than visually
+    floating beside the card.
+  - How-it-works process background changed from dark overlay to high-contrast
+    paper/panel cards.
+  - Quote heading now says: "Tell us what needs cleaning, and we will email you
+    a quote." Subcopy points customers to the Notes field for special requests.
+  - Form now has Square footage, renames Special requests to Notes, removes
+    Recurring cleaning from the Service type dropdown, and gives the submit
+    button more breathing room.
+  - Testimonials headline changed to "See what customers are saying about the
+    work." Review avatar is now smaller and placed with the reviewer name; the
+    "Google Maps review placeholder" text was removed.
+  - FAQ answers were rewritten in a more conversational tone.
+  - Gallery is landscape-biased on desktop and portrait-biased on mobile.
+  - Final CTA has no pill text, centered content, and a high-contrast button.
+  - Footer tagline now says: "Professional cleaning for homes, offices, and
+    move-ready spaces."
+  - Header/footer brand styling now treats the shortened name as a text logo
+    with display typography and an accent underline.
+- README.md generated website section was updated with the new cleaning
+  template details.
+- Verification performed:
+  - python -m compileall app tests
+  - python -m unittest tests.test_campaign_helpers.CampaignHelperTests.test_static_website_logo_removes_generic_words tests.test_campaign_helpers.CampaignHelperTests.test_static_website_preview_url_points_to_landing
+  - Generated HTML sanity checks for one H1, image alt text, labels/controls,
+    skip links, 8 review cards, 12 gallery frames, removed why section, and
+    Square footage field.
+  - Manual contrast token check for light/dark pairs including final CTA and
+    inverse button colors; all checked pairs passed WCAG AA 4.5:1.
+
+Landing services CTA placement fix:
+- User reported that the landing page service CTA buttons were still not
+  appearing below each service text.
+- Root cause: .service-grid article used a two-column CSS grid. The number badge
+  occupied column 1, but the service paragraph did not explicitly set a grid
+  column, so browser auto-placement could put text and button in different
+  visual tracks.
+- app/services/static_website_generator.py now explicitly sets:
+  .service-grid h3, .service-grid p, and .service-grid a to grid-column: 2 on
+  desktop/tablet layouts, and all three to grid-column: 1 on mobile.
+- tests/test_campaign_helpers.py adds
+  test_static_website_service_cta_stays_below_service_text so the CSS contract
+  is covered by regression tests.
+- Verification performed:
+  - python -m compileall app tests
+  - python -m unittest tests.test_campaign_helpers.CampaignHelperTests.test_static_website_service_cta_stays_below_service_text tests.test_campaign_helpers.CampaignHelperTests.test_static_website_logo_removes_generic_words tests.test_campaign_helpers.CampaignHelperTests.test_static_website_preview_url_points_to_landing
+  - Generated a temporary preview at C:\tmp\service-cta-preview\index.html.
+  - Launched Chromium with Playwright, scrolled to #services, saved screenshot
+    C:\tmp\service-cta-preview-services.png, and measured bounding boxes. All
+    service CTA button top positions were below their corresponding paragraph
+    bottom positions.
+
+Generated site page count and service card change:
+- User clarified that services.html should not be generated going forward, but
+  the nav link should remain. The nav and footer Services links now point to the
+  landing page service section: index.html#services.
+- app/services/static_website_generator.py _write_site now emits only:
+  index.html, contact.html, css/landing.css, css/contact.css, and js/site.js.
+  It no longer writes services.html or css/services.css.
+- _write_site also removes stale services.html and css/services.css when
+  rebuilding an existing generated site directory.
+- The landing page service cards no longer include Move-in / move-out cleaning.
+  Cleaning landing services are now: Standard home cleaning, Deep cleaning,
+  Post-construction cleaning, and Commercial cleaning.
+- README.md was updated to document that generated sites are now two pages
+  instead of three pages.
+- tests/test_campaign_helpers.py now covers:
+  - generated output includes index/contact only and excludes services.html and
+    css/services.css
+  - Services nav points to index.html#services
+  - landing HTML does not include Move-in / move-out cleaning
+
+Gallery image pool:
+- app/services/static_website_generator.py now has _gallery_image_urls(), which
+  returns twelve different Unsplash image URLs for the generated cleaning
+  gallery instead of repeating the same placeholder image in every frame.
+- _site_context exposes this list as gallery_images, and _gallery_frames cycles
+  through it while preserving the existing alt text list.
+
+Alternating gallery layout:
+- _gallery_frames now assigns orientation classes in a repeating sequence:
+  landscape, portrait, portrait, landscape.
+- Landing CSS uses a dense three-column masonry grid on large screens where
+  .landscape spans 2 columns x 2 rows and .portrait spans 1 column x 3 rows.
+- Mobile still collapses to one column with portrait-biased frames.
+
+Google rating and review extraction:
+- app/services/maps_scraper.py now extracts google_rating, google_review_count,
+  and up to 9 google_reviews from each opened Google Maps detail panel.
+- Rating extraction is defensive and checks common Maps selectors such as
+  span.MW4etd, div.F7nice, and aria-label star text.
+- Review extraction tries to open the Maps reviews panel, clicks the hidden
+  "More reviews" list button when present, expands truncated card text,
+  reads review cards from div.jftiEf / div[data-review-id], and captures
+  author, review text, rating, review id, and transient avatar source URL for
+  Cloudinary upload. Transient URLs are not persisted.
+- app/workers/tasks.py persists google_rating, google_review_count, and
+  google_reviews on new lead documents.
+- app/services/static_website_generator.py uses google_rating/google_review_count
+  for the hero rating line and google_reviews for testimonials. It falls back to
+  placeholders only when scraped review data is absent.
+- README.md documents that generated cleaning websites use Google rating/reviews
+  when available.
+- Tests added:
+  - tests/test_maps_scraper.py covers _parse_rating_value and
+    _parse_review_count.
+  - tests/test_campaign_helpers.py covers generated sites using real
+    google_rating/google_reviews instead of placeholders.
+
+Verification passed:
+- Select-String -Path websites\index.html -Pattern "style=|<style|onclick=|<script(?! src=)"
+  returned no matches from C:\Users\user\coding\projects\lead-pipeline.
+- Select-String -Path websites\css\base.css -Pattern "prefers-color-scheme|color-scheme"
+  confirmed automatic system light/dark mode.
+- Select-String -Path websites\index.html,websites\css\base.css,websites\js\base.js
+  -Pattern "portal|Preview Theater|stage is set|lobby" returned no matches.
+- Get-ChildItem -Recurse websites confirmed:
+  websites\index.html
+  websites\css\base.css
+  websites\js\base.js
+
+Static website template refresh:
+- app/services/static_website_generator.py now generates richer three-page
+  static sites for leads marked needs_website=true.
+- index.html now has an image-led landing page with hero, process, service
+  preview, trust, and CTA sections.
+- services.html now has a stronger service page with hero image, four service
+  blocks, preparation checklist, FAQ details, and CTA.
+- contact.html now has a static contact form, displayed email/phone/address,
+  and a Google Maps iframe when an address is available.
+- Generated contact forms remain static. If a lead email exists, js/site.js
+  opens a mailto draft with the form details. It does not submit data to the
+  backend.
+- Each generated page still uses external CSS and JS only. No framework was
+  added and no package was installed.
+- CSS includes light/dark mode via prefers-color-scheme and subtle reveal
+  animation via IntersectionObserver, disabled for reduced motion.
+- README.md documents the richer generated website template and contact form
+  behavior.
+
+Cleaner competitor-pattern update:
+- The user asked to use the saved "cleaners in atlanta" organic search evidence
+  to improve the generated website template.
+- Local API evidence for campaign P251LpnW3rLRKzA2pOtE contained 9 organic
+  results, not 10. Useful business/service references were:
+  atlantagreenmaids.com, getspruce.com, thecleaningauthority.com/atlanta,
+  tjaffordablecleaning.com, and themoxiemaids.com. Reddit, Care, Yelp, and
+  TikTok were not used as business page-structure references.
+- Observed cleaner-page patterns: above-fold quote/booking CTA, visible phone,
+  service categories, cleaning checklist, trust/screening/process copy,
+  service areas, FAQs, repeated CTA, and contact friction reduction.
+- app/services/static_website_generator.py now has a cleaning-specific profile
+  when niche contains clean/maid/janitor/housekeep.
+- Cleaning profile adjusts landing, services, and contact copy; adds cleaning
+  service cards; adds a room-by-room checklist; and adds a service-type select
+  to the static contact form.
+- No fabricated ratings, guarantees, coupons, years-in-business, or review
+  counts are generated. The template uses competitor structure, not copied
+  claims or text.
+- README.md documents the cleaning-specific profile and its evidence-inspired
+  behavior.
+
+Cleaning template redesign from user reference:
+- User added reference files under:
+  C:\Users\user\coding\projects\lead-pipeline\websites\white-rabbit-cleaning-llc\cleaning_template
+  Files:
+  cleaning_template_sample.webp
+  landing_page_sections.md
+- The markdown requested a landing structure with Hero, About, Services,
+  Why Choose Us, How It Works, Quote Request Form, Testimonials, FAQ, Final
+  CTA, and Footer. The implementation follows that structure but avoids
+  fabricated testimonials/review counts.
+- The sample image used rounded panel sections, image-led hero, service cards,
+  a strong blue how-it-works band, quote/contact CTAs, and a dark footer. User
+  specifically said the nav should not be a separate color, so the generated nav
+  now sits on the page background rather than a contrasting bar.
+- app/services/static_website_generator.py landing template was redesigned:
+  hero image panel, about split panel, service cards with CTAs, why-choose-us,
+  process band, detailed quote form, FAQ, final CTA, and footer.
+- Copy now avoids repeating the company name across every section. The company
+  name is mainly used where it is useful for identity, such as metadata, about,
+  footer, and contact details.
+- Added logo shortening logic:
+  _logo_text removes generic words like cleaning/services/llc when the remaining
+  words make sense; otherwise it uses initials from the meaningful words.
+- README.md documents the reference-driven cleaning template and logo behavior.
+
+Cleaning template correction:
+- User rejected the prior version because the copy was query/campaign-oriented,
+  repeated the business name too often, had poor contrast, poor images, and the
+  hero was not full width.
+- app/services/static_website_generator.py was corrected so cleaning landing
+  copy is customer-facing rather than search-query-facing.
+- Visible business-name usage on the landing is now limited mainly to the About
+  heading and identity/logo areas; other sections use collective pronouns.
+- The hero is full-bleed across the page instead of boxed in page margins.
+- Services/contact pages now use the same panel/contrast system as the landing
+  instead of the older leftover CSS.
+- Preview URLs now return the generated site root/landing page instead of
+  contact.html in both app/routes/websites.py and app/workers/tasks.py.
+- README.md preview examples were updated from /contact.html to the site root.
+
+Cleaning template trust-journey revision:
+- User moved the reference directory to:
+  C:\Users\user\coding\projects\lead-pipeline\websites\cleaning_template
+- New reference file services_sample.png shows four services:
+  Standard Home Cleaning, Move-In / Move-Out Cleaning, Deep Cleaning, and
+  Post-Construction Cleaning. Use the service set/structure, not the text
+  verbatim.
+- User clarified the whole site should convince visitors to outsource cleaning
+  to the business, not fixate on quote form inputs. The page journey should be:
+  hero benefit -> about -> services -> why choose us -> how it works -> quote
+  form -> one testimonial -> FAQ -> masonry gallery -> final CTA -> footer.
+- app/services/static_website_generator.py landing template now follows that
+  journey. Copy focuses on trust, time saved, coming home to a clean space, and
+  why hiring a cleaner is worth it.
+- Services section is now full-bleed and follows the services_sample layout
+  with four services and arrow markers.
+- Added testimonial placeholder section, FAQ with actual cleaning-service
+  questions, masonry gallery using one repeated placeholder image, and a final
+  CTA framed as a benefit question.
+- Added a skip link and strengthened focus/contrast tokens per the newly
+  installed accessibility and web-quality-audit skill guidance.
+- README.md originally pointed to websites/cleaning_template; this was later
+  superseded by websites/templates/cleaning_template.
+
+Gallery removal from generated websites:
+- User decided the current placeholder gallery weakens trust and should be
+  removed until real Google Maps listing photos can be scraped and used.
+- app/services/static_website_generator.py no longer renders the landing-page
+  gallery section.
+- Removed the unused gallery image pool and _gallery_frames helper. The single
+  gallery_image context value remains because it is still used as a fallback
+  avatar image for placeholder testimonials.
+- Removed gallery/masonry CSS and responsive rules from the generated landing
+  stylesheet.
+- README.md now describes the generated landing page without the gallery and
+  notes that the placeholder gallery is intentionally omitted until real listing
+  photos are available.
+
+Standalone Google Maps listing media test:
+- User asked for a standalone Google Maps listing media scraper before
+  integrating media extraction into the main campaign scraper.
+- Test lead requested by the user: lJObYr5F24r4dbtneBcv.
+- app/services/maps_media_scraper.py was added. It revisits a saved
+  google_maps_url, opens the listing photos panel when possible, extracts up to
+  12 listing-owned image URLs and up to 1 video URL, uploads the remote media to
+  Cloudinary via the existing requests dependency, and returns hosted links.
+- scripts/scrape_listing_media.py was added as the CLI entry point:
+  python scripts/scrape_listing_media.py LEAD_ID --max-images 12 --max-videos 1
+- The script fetches the Firestore lead, uses its google_maps_url, uploads media
+  to Cloudinary, and updates the same lead with:
+  google_listing_images, google_listing_videos,
+  google_listing_source_image_urls, google_listing_source_video_urls,
+  google_listing_media_status, google_listing_media_error, and
+  google_listing_media_updated_at.
+- app/config.py now includes Cloudinary settings:
+  cloudinary_cloud_name, cloudinary_api_key, cloudinary_api_secret, and
+  cloudinary_maps_media_folder.
+- .env.example documents CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY,
+  CLOUDINARY_API_SECRET, and CLOUDINARY_MAPS_MEDIA_FOLDER.
+- tests/test_maps_media_scraper.py covers URL filtering and Google image size
+  variant deduping.
+- This is not yet integrated into the main scraper or generated website gallery.
+- Live test after user added Cloudinary keys:
+  python scripts/scrape_listing_media.py lJObYr5F24r4dbtneBcv --max-images 12 --max-videos 1
+  Result: success. Firebase lead was found, Maps listing opened for "New to
+  Neat Cleaning Company", 10 image source URLs were collected, 0 video source
+  URLs were found, all 10 images uploaded to Cloudinary, and the Firestore lead
+  was updated with status=uploaded.
+- User then inspected the 10 images and reported several were not useful
+  listing photos:
+  image_05, image_06, and image_07 were 36x36 Google profile/avatar PNGs with
+  source URLs under lh3.googleusercontent.com/a- or /a/ and review-profile
+  fragments like rp-mo/br100. image_10 was a 48x48 avatar. These are now
+  filtered out before upload.
+- maps_media_scraper now rejects Google profile/avatar URL families, tiny
+  dimensions, review-profile URL fragments, map/search assets, and non-listing
+  Google image families. It also scrolls the media panel more aggressively so
+  discarded avatar candidates can be replaced by real listing photos.
+- scripts/scrape_listing_media.py now supports --clear-existing. It deletes
+  existing Cloudinary resources stored on the lead, clears listing media fields
+  in Firestore, then reruns the scrape/upload.
+- Live rerun with cleanup:
+  python scripts/scrape_listing_media.py lJObYr5F24r4dbtneBcv --max-images 12 --max-videos 1 --clear-existing
+  Result: success. The script deleted the 10 prior Cloudinary images, cleared
+  the lead media fields, collected 12 filtered listing image source URLs, found
+  0 videos, uploaded all 12 images to Cloudinary, and updated the Firestore lead
+  with status=uploaded. A visual contact sheet was generated at
+  C:\tmp\maps-media-lJObYr5F24r4dbtneBcv\contact-sheet.jpg and checked: the
+  new set no longer contains obvious Google profile avatars/DPs or flyers.
+
+Main scraper listing-media integration:
+- User asked to integrate the standalone Google Maps listing media scraper into
+  the normal scraper process with full logs for business context, scrape
+  attempts, discard reasons, upload attempts, Cloudinary upload URLs, and
+  failures.
+- app/config.py now has:
+  maps_listing_media_enabled=true, maps_listing_media_max_images=12, and
+  maps_listing_media_max_videos=1. .env.example documents
+  MAPS_LISTING_MEDIA_ENABLED, MAPS_LISTING_MEDIA_MAX_IMAGES, and
+  MAPS_LISTING_MEDIA_MAX_VIDEOS.
+- CampaignCreate now accepts optional listing_media_enabled. create_campaign
+  stores it under scrape_settings.listing_media_enabled. If omitted, worker
+  settings fall back to MAPS_LISTING_MEDIA_ENABLED.
+- app/workers/tasks.py now runs _scrape_and_persist_listing_media() after Maps
+  lead persistence and before final stats sync. It processes returned lead IDs,
+  skips leads with existing google_listing_images/google_listing_videos, skips
+  missing google_maps_url, and records Firestore status/error fields per lead.
+- If Cloudinary is not configured, media scraping is skipped with
+  stats.maps.listing_media_skip_reason=cloudinary_not_configured and the
+  campaign scrape does not fail.
+- stats.maps now gets listing media counters:
+  listing_media_enabled, listing_media_candidates, listing_media_processed,
+  listing_media_uploaded_images, listing_media_uploaded_videos,
+  listing_media_no_media_found, listing_media_missing_google_maps_url,
+  listing_media_already_present, listing_media_failed,
+  listing_media_skipped, and optional listing_media_skip_reason.
+- app/services/maps_media_scraper.py now logs accepted/discarded image
+  candidates at info level. Discard logs include reason codes such as
+  not_http, not_googleusercontent, google_profile_avatar, blocked_fragment:...,
+  not_listing_photo_family, too_small:WxH, and small_square:WxH. Upload logs
+  include business, campaign, lead ID, candidate URL, and uploaded Cloudinary URL.
+- README.md documents that listing media is now part of the normal Maps scrape
+  when enabled, and adds scraping_listing_media to the progress stage list.
+
+Generated website gallery restored:
+- User asked to bring back the landing page gallery now that listing media can
+  be scraped and uploaded to Cloudinary.
+- app/services/static_website_generator.py now restores the gallery section
+  between FAQ and final CTA.
+- _site_context now exposes gallery_images from lead.google_listing_images.
+  The generator uses the Cloudinary URL, width, and height to choose landscape
+  or portrait frame classes. If a lead has no google_listing_images, it falls
+  back to a small generic cleaning image set.
+- _gallery_frames renders up to 12 images with responsive masonry CSS.
+- README.md now documents the listing-photo gallery.
+- tests/test_campaign_helpers.py now asserts that the gallery exists and that
+  Cloudinary listing images are rendered with landscape/portrait classes.
+
+Gallery design update:
+- User provided a Colorlib/Talva reference image:
+  https://colorlib.com/wp/wp-content/uploads/sites/2/telva-minimal-gallery-site-template.jpg
+- app/services/static_website_generator.py gallery was redesigned toward that
+  minimal editorial style: generous paper/white space, compact heading, tight
+  image gutters, square image corners, no card shadows, and an uneven 12-column
+  grid rhythm with frame-N classes.
+- Mobile collapses to a single-column image stack with landscape/portrait
+  aspect-ratio bias.
+
+Review/rating/address repair:
+- User found generated site issues on lead lJObYr5F24r4dbtneBcv:
+  duplicate reviews, wrong hero rating, reviewer names containing "Local Guide"
+  metadata, placeholder reviewer avatars, review links pointing to "#", no
+  gallery "see more" button, and non-address Google Maps attributes saved as
+  addresses.
+- app/services/maps_scraper.py now:
+  - rejects non-address detail rows such as "Identifies as women-owned",
+    "Identifies as Black-owned", "LGBTQ+ friendly", "Open 24 hours",
+    accessibility/service option labels, etc. It normalizes common Unicode
+    hyphen variants before matching these ownership/profile phrases.
+  - rejects website URLs/domains as addresses even when the Maps profile has
+    no physical address row.
+  - prioritizes detail-panel rating selectors (div.F7nice) before generic
+    span.MW4etd so nearby result-card ratings do not overwrite the selected
+    business rating.
+  - parses review counts from text like "5.0\n(8)".
+  - clicks the real Reviews button before generic lowercase review buttons so
+    legal disclosure controls are not mistaken for review controls.
+  - dedupes review cards by review_id or cleaned author+text.
+  - cleans reviewer display names to the first line only.
+  - extracts reviewer avatar source URLs and uploads them later via Cloudinary.
+- app/services/maps_media_scraper.py added upload_review_avatars(), which
+  uploads reviewer avatar source URLs to Cloudinary and stores avatar_url /
+  avatar_cloudinary_public_id on each review.
+- app/workers/tasks.py uploads review avatars during lead persistence and
+  listing media processing when Cloudinary is configured, then sanitizes saved
+  review objects so transient review URLs, listing review URLs, and
+  avatar_source_url are not stored. repair-maps-data also deletes old
+  google_reviews_url fields from existing leads.
+- app/workers/tasks.py _carry_existing_review_avatars() now copies avatar_url
+  and avatar_cloudinary_public_id from matching existing reviews before upload,
+  so repair-maps-data does not re-upload reviewer avatars that have already
+  been uploaded for the same review_id or author+text.
+- app/services/notion_service.py uses _rich_text_clearable() for Lead Address.
+  This matters because Notion PATCH only changes properties that are included:
+  when Firestore address is None/empty after repair-maps-data, Address must be
+  sent as {"rich_text": []} to clear stale values like "LGBTQ+ friendly" or
+  "Open 24 hours" from existing Notion pages.
+- 2026-06-01 log diagnosis for campaign scbvAEmb2JKo5HgCDouA: forced Notion
+  sync did run and PATCH all 67 lead pages, but a prior sync with
+  pull_from_notion=True pulled stale Notion Address values back into Firestore
+  after repair-maps-data had cleared them. Example: lead
+  lJObYr5F24r4dbtneBcv was repaired with address=None at 05:16, then
+  "[Notion Pull] ... updated from Notion fields: ['address']" at 05:24.
+- app/services/notion_service.py now validates Address values during Notion
+  pull before writing them back into Firestore. It accepts physical-looking
+  addresses and ignores profile badges, service-option text, domains, URLs,
+  and phone-like strings. This prevents stale Notion values such as
+  "LGBTQ+ friendly", "Identifies as women-owned", "Open 24 hours", or a
+  website domain from re-contaminating repaired Firestore lead addresses.
+- app/workers/tasks.py now treats website-looking addresses with paths,
+  query strings, or fragments as invalid address values too, not only bare
+  domains. This matters for stale/older data like
+  "https://example.com/contact?src=maps" or "example.com/book", which should
+  be moved to Website and cleared from Address. The older repair-websites path
+  also validates repaired_address before writing it, so it cannot re-save a
+  website value into Address.
+- app/services/static_website_generator.py now dedupes reviews defensively,
+  uses clean reviewer names, uses review.avatar_url when present, removes the
+  4.9 placeholder rating fallback, adds "See more photos" in the gallery, and
+  links that button to a Google Maps photos-tab URL variant.
+- Review scraping now clicks the hidden "More reviews" list button when
+  present, collects up to 9 reviews, and expands per-card Google Maps "More"
+  controls before reading .wiI7pd/.MyEned text, so saved reviews should contain
+  full text instead of the visible truncated "..." version when Google exposes
+  an expand button.
+- Review scraping no longer takes a single card-count snapshot. It logs
+  "Fetching reviews for {business}", the total review count, each More reviews
+  click, each scroll pass, each reviewer being fetched, success, duplicate
+  skips, failures, and the final fetched count. This matters because Google
+  virtualizes the reviews list and may only keep around 3-5 visible cards in
+  the DOM at a time even when the listing has 100+ reviews.
+- Generated testimonials no longer wrap every card in a review link. The
+  section has one "View more reviews" button using google_maps_url. The grid
+  uses a 6-column layout so large screens can show up to three cards per row
+  while using half/full-width balancing for 1, 2, 4, 5, 7, and 8 reviews to
+  avoid orphan cards.
+- Added campaign-wide Maps data repair:
+  POST /api/campaigns/{campaign_id}/repair-maps-data
+  queues tasks.repair_campaign_maps_data. It can refresh leads in the campaign
+  with a saved google_maps_url and updates the existing lead in place with
+  newly available Maps-derived data: website, address, phone,
+  google_rating, google_review_count, expanded google_reviews, and reviewer
+  avatar Cloudinary URLs when Cloudinary is configured. It does not create
+  duplicate leads.
+- repair-maps-data is now validation-aware. Before browser work, it checks
+  existing website/address/phone/rating/review data with the same kind of
+  guards used during scraping: rejects directories/social domains as owned
+  websites, rejects profile badges/domains/phones as addresses, validates phone
+  shape, rating range, non-negative review count, and whether saved reviews are
+  complete enough for the known review count. Leads with valid existing data
+  are skipped. Leads with invalid data get a repair_fields list: "details" for
+  website/address/phone rows, "rating" for rating/count, and "reviews" for the
+  reviews panel. The Maps scraper honors that list so it does not open the
+  reviews panel for address-only fixes or touch detail fields for review-only
+  fixes. Successful repairs store maps_data_repair_checked_fields so missing
+  details that were already checked are not re-scraped every run. Repaired
+  leads are synced to Notion immediately inside the repair task when Notion is
+  configured; repair results include notion_synced and notion_skipped counters
+  and log a warning when a repaired lead does not get a Notion page id.
+- repair-maps-data now has endpoint controls:
+  GET /api/campaigns/{campaign_id}/repair-maps-data/preview for dry-run plans,
+  and POST /api/campaigns/{campaign_id}/repair-maps-data with query params
+  fields=auto|details|website|address|phone|rating|reviews|media|comma-separated,
+  force=true/false, lead_ids=id1,id2, and sync_notion=true/false. fields=details
+  is still the broad Maps detail option and expands to website/address/phone;
+  the specific website/address/phone options let repair target only one detail
+  field while still reading Maps detail rows internally. The Celery task uses
+  the same build_maps_repair_plan() helper as the preview endpoint, so
+  previewed and executed candidate lists stay aligned. fields=auto is the
+  default.
+- repair-maps-data now supports listing media repair via fields=media or
+  fields=auto when existing google_listing_images are missing/incomplete. The
+  completeness check requires the configured target image count (capped at 12)
+  and stored Cloudinary URLs. Media repair reuses scrape_upload_listing_media()
+  from app/services/maps_media_scraper.py, so the same avatar/profile/tiny-image
+  filtering and Cloudinary upload behavior from the normal Maps scrape applies.
+  Videos remain optional; if no video is available, the target is still complete
+  once enough listing images are saved.
+- Added GET /api/leads/{lead_id}/diagnostics. It reports Maps repair fields,
+  last checked repair fields, website/address/phone/rating/review state,
+  listing media counts, email/needs_website state, Notion page linkage, and
+  generated website status. This is meant to reduce log-hunting for individual
+  lead issues.
+- GET /api/campaigns/{campaign_id}/website-candidates now groups campaign leads
+  into missing_email, not_marked_needs_website, ready_to_build, preview_built,
+  and hosted buckets, with preview URLs and listing-image counts.
+- Generated websites use google_listing_images only in the gallery. Hero and
+  support images remain curated generic images so listing photos do not affect
+  above-the-fold or layout-critical imagery.
+- The older repair-websites endpoint remains focused on no-website repair and
+  pending-status reset. repair-maps-data is the broader backfill/enrichment
+  endpoint for campaigns scraped with earlier scraper versions.
+- Generated site context no longer uses campaign location as the physical
+  address/map query fallback. If the lead address is empty, Firestore remains
+  empty and the site displays "Service area: {location}" without a map pin.
+- Live repair performed for lead lJObYr5F24r4dbtneBcv:
+  address set to empty string, google_rating=5.0, google_review_count=8,
+  reviews deduped to 3 visible review cards, reviewer avatars uploaded to
+  Cloudinary, and preview rebuilt at
+  http://localhost:8000/generated-sites/new-to-neat-cleaning-company-ljobyr/
+
+Latest commit:
+Pending in current working tree until committed by this turn.
+
+2026-06-02 update:
+- Fixed a Google Maps listing media scraper failure mode where the repair task
+  could find valid image URLs, open the photos panel, then fail the whole lead
+  with "Page.evaluate: Execution context was destroyed" after Maps changed its
+  SPA execution context. app/services/maps_media_scraper.py now wraps page
+  evaluation in a Maps-stabilizing retry helper, waits after photo-panel clicks,
+  keeps already accepted image URLs when a later photo-panel scan fails, and
+  skips an extra video-panel click when the target image count is already met.
+  This should make leads like Atlanta Cleaners, Metro Cleaners, and Zerorez
+  save partial/full listing images instead of being counted as media failures.
+- Generated cleaning landing pages now hide the gallery section unless the
+  lead has at least 6 real google_listing_images. The generator no longer uses
+  fallback Unsplash images for the gallery; listing photos remain the only
+  gallery source, and low-photo leads skip that section entirely.
+- Added ZeptoMail API sending setup. New settings are ZEPTOMAIL_API_TOKEN,
+  ZEPTOMAIL_API_URL, ZEPTOMAIL_FROM_EMAIL, ZEPTOMAIL_FROM_NAME, optional
+  ZEPTOMAIL_REPLY_TO_EMAIL, ZEPTOMAIL_REPLY_TO_NAME, ZEPTOMAIL_SANDBOX_MODE,
+  and TEST_EMAIL. New service: app/services/zeptomail_service.py. New routes:
+  POST /api/email/zeptomail/test and POST /api/email-drafts/{draft_id}/send.
+  Sandbox mode returns/logs the intended send without calling ZeptoMail. Draft
+  sends require approved status by default and update Firestore with provider,
+  ZeptoMail status, message id/error/response, last_send_to, last attempt time,
+ and status=sent/sent_at only after a real successful send.
+- ZeptoMail error responses now include sanitized diagnostics: API host/path,
+  HTTP status code, selected request/response IDs/headers when present, and a
+  safe payload preview. The API token and full body are never returned/logged.
+
+2026-06-15 update:
+- Website-lead audits now include passive browser performance metrics captured
+  during the real Playwright navigation, not just post-load DOM heuristics.
+  app/services/website_scraper.py injects a small init script before page load
+  to collect first contentful paint (FCP), largest contentful paint (LCP),
+  cumulative layout shift (CLS), interaction timing when available (INP/event
+  timing proxy), DOMContentLoaded, load time, and TTFB. These metrics are
+  returned inside browser_quality for both desktop and mobile viewport passes.
+- Browser quality scoring now penalizes poor vitals in addition to layout and
+  readability issues. Current penalties include slow LCP, high CLS, slow INP
+  when available, and slow full-page load. The summary string passed into the
+  Gemini website-audit prompt now includes FCP/LCP/CLS/INP/load values for
+  both desktop and mobile.
+- This means website-lead cold outreach can now cite business-facing problems
+  such as slow page speed, mobile layout shift, or weak above-the-fold CTA
+  visibility instead of relying only on scraped copy and structure.
+
+2026-06-15 follow-up:
+- Website-lead appraisal and first-touch audit email drafting were moved off
+  Gemini. New service: app/services/website_appraisal.py. It produces the same
+  audit-report shape expected by the app using deterministic rules over scraped
+  page structure and browser_quality metrics. It scores copy/SEO/UX, ranks
+  factual findings, and stores appraisal_method="deterministic".
+- Website-lead Gmail draft copy now uses a rule-based cold-email template built
+  from the primary measured finding. The template follows the cold-email skill
+  direction: short, peer-like, one observation, business impact, one report link,
+  and one low-friction ask. It does not ask Gemini to formulate the first-touch
+  audit email.
+- Worker paths changed:
+  _process_website_lead calls appraise_website().
+  _create_audit_email_draft now calls generate_audit_email_template(). The
+  public audit regenerate route also uses appraise_website().
+- No-website analysis/email generation now follows the same model: deterministic
+  appraisal first, template-based first-touch draft, optional AI rewrite only
+  when OUTREACH_AI_REWRITE_ENABLED=true.
+- No-website first-touch template now uses the user's preferred framing:
+  "I was looking at how customers search for {query} and came across {business}
+  on Google Maps", mentions up to three business examples from organic search
+  evidence, uses the exact sentence "I couldn't find a website for your business
+  in those results.", links the generated prototype, and closes by asking whether
+  getting customers through Google search is interesting or Maps is handling it
+  well enough.
+- Website performance metrics now capture the LCP culprit element, not just
+  LCP timing. app/services/website_scraper.py stores lcp_element with tag,
+  selector, label, text/alt, URL, size, rect, render time, and resource timing
+  when available. The browser-quality summary includes "LCP culprit=...".
+  app/services/website_appraisal.py uses this to phrase speed findings as
+  "on mobile, {culprit} takes Xs to show up" instead of exposing the term
+  "largest contentful paint" in outreach-facing findings.
+- Has-website first-touch outreach now has scenario-specific rule-based
+  templates in app/services/website_appraisal.py. The page speed/page load
+  subject is "Your website is slow on mobile". The body follows the updated
+  framing: the homepage takes X seconds to load on mobile, that delay can mean
+  fewer calls and quote requests, and the audit link can be shared with whoever
+  manages the site or used as a basis for us to help implement recommendations.
+  Additional
+  scenarios cover layout stability, conversion path, readability, mobile layout,
+  trust, message clarity/copy clarity, and search basics with the same concise
+  cold-email structure.
+
+2026-06-16 sample audit artifact:
+- Created a standalone static sample audit report at the workspace root:
+  ../atlanta-green-maids-audit-report.html. It uses real browser-scraped data
+  from https://atlantagreenmaids.com/ and the current app workflow:
+  website scrape -> browser-quality metrics -> appraise_website() ->
+  generate_audit_email_template(). The page is self-contained with internal CSS
+  and JS for copy/scroll interactions.
+- The sample report records Atlanta Green Maids scores: overall 8/10, copy
+  10/10, SEO 10/10, UX 5/10, browser quality 4/10. The primary deterministic
+  finding is "mobile has low-contrast text", so the generated outreach scenario
+  uses subject "website readability".
+- The HTML was checked with system Chrome at 1440x1000 and 390x844. Both
+  desktop and mobile checks reported no horizontal overflow.
+
+2026-06-16 website audit endpoint update:
+- Added synchronous campaign-level audit endpoints in app/routes/audits.py and
+  mounted them in app/main.py:
+  POST /api/campaigns/{campaign_id}/audit-websites and
+  POST /api/campaigns/{campaign_id}/audit-blocked-websites.
+- /audit-websites accepts JSON body {lead_ids, manual_verification, force}.
+  It audits campaign leads with saved websites, stores completed audit reports
+  in Firestore, writes lead audit status fields, and returns per-lead JSON
+  results with status, report id/slug, business-facing report URL, API report
+  URL, score, primary issue, and error. It does not create Gmail drafts or sync
+  Notion.
+- /audit-blocked-websites accepts only {lead_ids}. It always uses visible manual
+  verification, selects only leads with website_audit_status=blocked_by_security,
+  and skips leads that already have an audit report.
+- app/services/website_scraper.py now detects Cloudflare/CAPTCHA/security
+  interstitial pages. With manual_verification=false it returns a blocked
+  signal. With manual_verification=true it launches visible Chromium, waits up
+  to 300 seconds for the user to pass the check, then continues scraping in the
+  same browser context. If the check is not passed in time, the lead is marked
+  blocked_by_security.
+
+2026-06-16 audit report renderer:
+- Added app/services/audit_report_renderer.py. It renders a complete
+  business-facing HTML audit report from a stored audit report document and its
+  related lead without calling an AI model. The renderer includes a hero,
+  score cards, site context, browser checks, every stored finding, a dedicated
+  "The two fixes I would prioritize" section for the top two findings, and a
+  final CTA using the Teerdox Calendly and website links.
+- Added root-level GET /audit/{slug}. The existing JSON endpoint
+  GET /api/reports/audit/{slug} remains unchanged.
+  Campaign audit responses now return the native FastAPI /audit/{slug} page as
+  report_url while report_api_url remains the JSON API URL.
+- app/services/website_appraisal.py now keeps all deterministic findings
+  instead of truncating to five. It also emits explicit findings for
+  small_tap_target_count and image_failures. Mobile small-target findings keep
+  phone-specific copy; desktop small-target findings use desktop/touch-laptop
+  wording and no longer mention one-handed phone usage.
+
+2026-06-16 renderer design correction:
+- The first committed renderer used a new card-heavy visual design. User
+  clarified that /audit/{slug} is customer-facing and should preserve the
+  earlier approved business audit report direction, not introduce a new design.
+- Reworked app/services/audit_report_renderer.py to use the prior green
+  "Diagnostic Letter" customer-facing report design from the root sample
+  reports. It still renders deterministically from stored report data and keeps
+  all findings plus a final top-two priority section before the CTA.
+- Regenerated the local root test artifact ../random-business-audit-renderer-test.html
+  from report Y0I4k5DcOMorv7P9cike / slug clean-tu-casa-llc-082d. Root test
+  HTML files are intentionally not committed.
+
+2026-06-16 audit report copy/evidence update:
+- Updated the customer-facing audit report copy so the report is primarily for
+  the business owner to act on, not a service pitch. The hero subtext now starts
+  with "The audit..." instead of "Your audit..."; the stats section is titled
+  "Stats from the review" and has no subtext; the final top-two section is
+  titled "The two fixes to prioritize"; first-person language is kept out of
+  the report except the final CTA.
+- app/services/website_scraper.py now captures actionable browser samples:
+  low_contrast_samples include selector and section context,
+  small_tap_target_samples include text/href/size/section, image_failure_samples
+  include image src/alt/selector/section, and LCP element data includes section
+  context.
+- app/services/website_appraisal.py now phrases LCP findings with actual text
+  or image/media URLs and nearby section headings instead of developer terms
+  like "h1 block". Broken-image, contrast, and tap-target findings attach
+  "details" lists for the renderer to show under "Where to look".
+
+2026-06-16 audit report template refinement:
+- Removed subtext under "What your site already does well", "All issues found",
+  and "The two fixes to prioritize".
+- Changed CTA subtext to end with "Let us fix that for you." and removed the
+  before/after summary promise.
+- Stats cards now skip unavailable n/a browser metrics and fall back to stored
+  scores/issue counts, so the stats section remains useful even when a run does
+  not collect complete browser-quality data.
+
+2026-06-16 broken-image false-positive fix:
+- User verified in-browser that the images flagged by an audit were visible, so
+  the browser-quality image failure check was too aggressive for lazy-loaded
+  and responsive images.
+- app/services/website_scraper.py now only counts a broken image when it is
+  visible, near the viewport, has a real non-placeholder source, is not a tiny
+  placeholder/tracker, has completed loading, and still reports zero natural
+  image dimensions.
+- app/services/website_appraisal.py now suppresses customer-facing
+  broken-image findings unless there are actionable image_failure_samples. A
+  legacy count without concrete broken URLs should not become an audit issue.
+
+2026-06-17 preview/audit public path update:
+- User chose /preview/{slug} as the client-facing path for generated websites
+  instead of /generated-sites/{slug}, /demo/{slug}, /new-website/{slug}, or
+  /no-website/{slug}.
+- app/config.py default GENERATED_WEBSITES_ROOT was originally ../preview; this
+  was later superseded by ../websites/preview so the Vercel-connected websites
+  repo is the static artifact source.
+- Local build responses and GET /api/leads/{lead_id}/website-preview now return
+  URLs like http://localhost:8000/preview/{slug}/. Published generated website
+  URLs now use BASE_URL/preview/{slug}/.
+- Added AUDIT_REPORTS_ROOT=../audit at this point in history; this was later
+  superseded by ../websites/audit. Audit reports remain stored in Firestore,
+  and /audit/{slug} still renders dynamically from stored data, but static
+  artifacts now live under the websites repo for Vercel publishing.
+- Updated Notion report sync to use Report property "Workflow Type" instead of
+  the old "Type" property, and to populate optional "Status" when present.
+
+2026-06-17 batch handling update:
+- Added batch_size request support to generated website build, generated
+  website publish, and generated-site outreach draft endpoints/tasks.
+- Default batch size is 25, with schema validation allowing 1-100.
+- The worker now logs and updates campaign progress at each batch boundary for
+  these long-running operations. Per-lead isolation remains unchanged; one lead
+  failure still increments failed/skipped and does not stop the rest of the job.
+
+2026-06-17 retry behavior update:
+- Added _create_gmail_draft_with_retries in app/workers/tasks.py.
+- Audit and no-website Gmail draft creation now retry up to three times with
+  short exponential backoff. A falsy Gmail draft ID is treated as failure.
+- This prevents the app from storing successful outreach records when Gmail did
+  not return a real draft id.
+
+2026-06-17 follow-up sequencing update:
+- Added OUTREACH_FOLLOW_UP_INTERVAL_DAYS (default 3) and
+  OUTREACH_MAX_FOLLOW_UPS (default 2).
+- Added POST /api/outreach/follow-ups/due. Body supports optional campaign_id,
+  optional lead_ids, limit, and batch_size. It queues
+  tasks.generate_due_follow_up_drafts.
+- Sending an email draft through ZeptoMail or marking it status=sent now stores
+  sent_at, stage, reply_status=no_reply, follow_up_count, follow_up_interval_days,
+  and follow_up_due_at when another follow-up is allowed.
+- First-touch outreach records now include campaign_id, workflow_type, status,
+  reply_status, follow_up_count, and follow_up_interval_days internally.
+- Due follow-up generation only considers sent parent outreach records with
+  no_reply, due follow_up_due_at, and follow_up_count below the max. It skips
+  closed or converted outreach records and avoids duplicate follow-up drafts.
+- Follow-up drafts are new EMAIL_DRAFTS documents with parent_outreach_id,
+  status=drafted, and Gmail draft ids. The parent outreach
+  record gets follow_up_count, last_follow_up_at, and the next due date updated.
+- Notion outreach sync now writes Workflow Type, Status, Reply Status, Follow
+  Up Count, Follow Up Due At, Last Follow Up At, Sent At, Follow Up Calendar
+  Event, Gmail Draft ID, Generated website url, and Notes when those properties
+  exist.
+
+2026-06-17 AI-off has-website heuristic run update:
+- Changed tasks.run_campaign_pipeline so AI_PROCESSING_ENABLED=false no longer
+  stops immediately after Google Maps scraping.
+- With AI disabled, /api/campaigns/{campaign_id}/run-full now processes
+  only has_website leads through deterministic website scraping/appraisal/report
+  creation/Gmail draft creation. No-website leads are skipped because they still
+  need the manual needs_website, preview review, publish, and outreach workflow.
+- Added processing_mode values:
+  full_ai when AI_PROCESSING_ENABLED=true, heuristic_has_website when false.
+- Resume now uses the same processing mode, so existing pending
+  has-website leads can be audited with deterministic heuristics while no-website
+  leads are always left for the generated-website publish workflow.
+- _maybe_rewrite_outreach_email now requires both AI_PROCESSING_ENABLED=true and
+  OUTREACH_AI_REWRITE_ENABLED=true before calling the AI rewrite service. This
+  keeps AI-off runs from consuming tokens even if the rewrite flag is enabled.
+
+2026-06-18 Run endpoint cleanup:
+- Removed the obsolete POST /api/campaigns/{campaign_id}/run alias.
+- Use POST /api/campaigns/{campaign_id}/run-full for the full scrape/analyze
+  pipeline, POST /scrape for Maps-only, and POST /resume for already-scraped
+  campaigns.
+
+2026-06-18 Endpoint cleanup:
+- Removed POST /api/campaigns/{campaign_id}/analyze because it duplicated
+  POST /api/campaigns/{campaign_id}/resume.
+- Removed POST /api/debug/campaigns/{campaign_id}/scrape-now. Long Maps work
+  should go through Celery with POST /api/campaigns/{campaign_id}/scrape.
+- Merged GET /api/campaigns/{campaign_id}/website-workflow into
+  GET /api/campaigns/{campaign_id}/website-candidates. The candidates response
+  now includes workflow_counts, workflow_buckets, and next_steps.
+- Kept POST /api/campaigns/{campaign_id}/websites/build and
+  GET /api/leads/{lead_id}/website-preview, but reframed them as template
+  testing/preview utilities rather than the production no-website workflow.
+- Removed GET /api/reports/audit/{slug}/html. Use /audit/{slug} for
+  business-facing HTML and /api/reports/audit/{slug} for JSON.
+- Removed public no-website report fetch/regenerate routes. No-website reports
+  remain internal support data for generated-site outreach.
+
+2026-06-18 Audit publish stale path repair:
+- Resume logs showed audit publishing failing because older Firestore report
+  records still had static_report_path values under the old root-level audit/
+  directory, while audit artifacts now live under ../websites/audit/.
+- _publish_campaign_audit_reports now resolves stale saved paths to the
+  configured audit root under the static websites repo, updates Firestore with
+  the repaired static_report_path, then commits/pushes from the websites repo.
+- If no local artifact exists for a report slug, publish skips that report and
+  logs the report id/slug instead of failing the whole campaign.
+- Celery results for completed full-run/resume paths now include an
+  audit_publish object. If audit publishing fails, the task status becomes
+  completed_with_audit_publish_failed and audit_publish_error includes the git
+  or publish failure reason, so the job result no longer looks fully successful.
+- Deleted three stale Firestore audit report records that had no local artifact:
+  KHvCOKpKStlbm44CFKQu, WZzUMteLe1upLjn8gn4H, and Y0I4k5DcOMorv7P9cike.
+
+2026-06-17 ZeptoMail cleanup:
+- Removed the unused ZeptoMail direct-send path because outreach now uses Gmail
+  drafts for review/sending.
+- Deleted app/services/zeptomail_service.py.
+- Removed POST /api/email/zeptomail/test and POST /api/email-drafts/{draft_id}/send
+  from app/routes/email.py.
+- Removed ZeptoMail settings from app/config.py, runtime config output, and
+  .env.example.
+- Removed SendEmailRequest, SendDraftEmailRequest, and SendEmailResponse schemas.
+- Follow-up scheduling still works by marking an outreach record as sent with
+  PATCH /api/outreach/{outreach_id}/status {"status":"sent"} after sending it
+  manually from Gmail.
+
+2026-06-17 Google Calendar follow-up reminder update:
+- Added Google Calendar event reminders for outreach follow-up due dates.
+- Gmail OAuth now requests both https://www.googleapis.com/auth/gmail.compose
+  and https://www.googleapis.com/auth/calendar.events using the same
+  credentials/token paths.
+- New settings:
+  GOOGLE_CALENDAR_FOLLOW_UP_REMINDERS_ENABLED=true,
+  GOOGLE_CALENDAR_ID=primary,
+  FOLLOW_UP_REMINDER_MINUTES=1440,
+  FOLLOW_UP_EVENT_HOUR=9,
+  FOLLOW_UP_EVENT_TIMEZONE=Africa/Lagos.
+- When PATCH /api/outreach/{outreach_id}/status sets status=sent, the app
+  computes follow_up_due_at, creates/updates a Google Calendar event, stores
+  follow_up_calendar_event_id, follow_up_calendar_event_link,
+  follow_up_calendar_status, and syncs those fields to Notion when matching
+  optional properties exist.
+- When tasks.generate_due_follow_up_drafts advances a parent outreach record to
+  the next follow-up due date, it updates the same calendar event instead of
+  creating duplicates when follow_up_calendar_event_id is present.
+- If the existing Google token was Gmail-only, the user must remove the token at
+  GMAIL_TOKEN_PATH and re-authorise after Calendar support is deployed.
+
+2026-06-17 status-based generated preview cleanup update:
+- Added POST /api/campaigns/{campaign_id}/websites/cleanup.
+- Cleanup is status-based, not time-based. It only removes local generated
+  website preview folders for unhosted leads when needs_website=false, or when
+  generated_website_status is discarded, rejected, cancelled, or canceled.
+- Hosted generated websites are explicitly protected because the local folder may
+  be the source folder committed/pushed to Vercel/Git.
+- Request body: lead_ids optional, dry_run defaults true, sync_to_notion defaults
+  true.
+- When dry_run=false and a preview is removed, the lead's local generated website
+  fields are cleared and generated_website_status is set to discarded, then
+  optionally synced back to Notion.
+2026-06-17 generated website Notion sync update:
+- The user removed `Generated Website Status` and `Generated Website Hosted At`
+  from the Notion Lead database.
+- `NotionSync.sync_lead()` no longer writes those two properties.
+- Firestore may still keep `generated_website_status` and
+  `generated_website_hosted_at` as internal workflow metadata, but Notion only
+  receives `Generated website url` for the client-facing generated site link.
+
+2026-06-17 no-website publish workflow update:
+- `POST /api/campaigns/{campaign_id}/websites/publish` is now the main
+  per-lead no-website workflow.
+- It pulls Notion lead edits by default, selects leads with `needs_website=true`
+  and at least one email, generates missing static website files, commits and
+  pushes the `websites` repo, writes `generated_website_url`, syncs the live URL
+  to Notion, ensures a no-website report exists, then creates the Gmail draft.
+- The preview build endpoint remains available for template/niche testing, but
+  is no longer required before publishing real lead websites.
+
+2026-06-17 archive workflow removal:
+- User does not want an archive status or archive workflow.
+- Removed the public archive campaign endpoints and the `bulk_archive_campaigns`
+  Celery task.
+- Delete still archives linked Notion pages internally because Notion's public
+  API exposes page removal as `archived=true`; this is an implementation detail,
+  not a user-facing archive workflow.
+
+2026-06-17 outreach/cleanup simplification:
+- Notion outreach sync now treats `Status` as the draft lifecycle and
+  terminal outcome. Expected Status options: drafted, sent, closed, converted.
+  `Reply Status` is intentionally narrow: no_reply or replied.
+  It no longer syncs separate `Stage`, `Subject`, or `Body` Notion columns.
+- Message content is folded into `Notes` so Notion does not need separate
+  subject/body columns and follow-up rows can still carry their message.
+- Follow-up eligibility now depends on `status=sent`, `reply_status=no_reply`,
+  due date, and follow-up count; the old `paused` stage gate was removed.
+- Generated website cleanup now depends on a closed outreach outcome:
+  `Status == closed`.
+- `maps_data_repair_status` remains an internal Firestore field and is not
+  synced to Notion.
+
+2026-06-17 Notion schema endpoint:
+- Added GET /api/config/notion/schema.
+- The endpoint returns configured Notion database property names, property
+  types, and select/status/multi-select option names.
+- It does not expose Notion API keys, database IDs, page data, or secret values.
+- It uses the app's normal runtime configuration; do not inspect `.env`.
+
+2026-06-17 Notion report simplification:
+- User decided the Notion `report` database should track customer-facing audit
+  reports only.
+- `NotionSync.sync_report()` now skips `report_type != "audit"`, so internal
+  no_website report records remain in Firestore but are not synced to Notion.
+- Report sync no longer writes `Slug` to Notion. Keep slugs internal.
+- Report sync can write `Report Url`, `Overall Score`, `Primary Issue`, and
+  `Created At` for audit reports when those fields exist in report data/schema.
+
+2026-06-17 Notion schema cleanup:
+- User removed Search Evidence `Raw JSON`, Campaign `Websites Built`, and added
+  the full set of Campaign `Status` options.
+- Notion search evidence sync no longer writes `Raw JSON`.
+- Campaign sync now writes the current summary metrics when the matching Notion
+  columns exist: `Needs Website`, `Websites Published`, `Outreach Drafts`,
+  `Audits Completed`, and `Audit Failures`.
+- Website audit endpoints now write latest audit-run summary stats into
+  `stats.website_audits` and refresh the campaign Notion page when Notion is
+  configured. The audit metrics are latest-run summaries, not cumulative
+  lifetime counters. `Audit Failures` is synced from failed plus blocked audit
+  outcomes.
+
+2026-06-17 Founder lookup removal:
+- User asked to remove the founder-finder path and associated fields.
+- Removed Hunter.io / Google CSE founder email lookup from the has-website
+  processing path. The app no longer needs `HUNTER_API_KEY`,
+  `GOOGLE_CSE_API_KEY`, or `GOOGLE_CSE_ID`.
+- Website email extraction now also extracts visible team members as
+  `Name - Role` strings and stores them on leads as `team_members`.
+- Notion lead sync writes those values to a rich text property named
+  `Team Members` when that property exists.
+- Lead API/export responses now expose `team_members` instead of
+  `founder_name`, `founder_linkedin_url`, or `founder_email_found`.
+
+2026-06-17 Resume/full-run workflow cleanup:
+- Full run and resume no longer call the legacy no-website analysis
+  functions directly. No-website leads are skipped in those paths with the
+  reason that they require the `needs_website` generated-site publish workflow.
+- Removed `_process_no_website_lead`, `_resume_website_analysis`, and
+  `_resume_no_website_analysis`.
+- Has-website resume now uses the same `_process_website_lead` path as full
+  run, so pending and pending_analysis website leads both scrape the website,
+  extract emails/team members, create the audit report, and create a Gmail draft
+  when an email is available.
+- Has-website email/team-member extraction now uses the existing Playwright
+  `page_data` from `scrape_website()` rather than making a separate requests
+  scrape. This keeps the main workflow to one website scrape pass while still
+  using the contact page text that `scrape_website()` appends.
+
+2026-06-17 Redis startup script update, revised:
+- User decided to simplify local development by running the whole app inside
+  WSL/Linux and removing Windows-specific startup behavior.
+- Removed scripts/redis-url.sh.
+- Replaced start-redis-wsl.sh with scripts/start-redis.sh.
+- start-worker.sh and start-api.sh now only support .venv/bin/activate and
+  expect Redis at localhost:6379 from the same Linux environment.
+- Current startup flow:
+  ./scripts/start-redis.sh
+  ./scripts/start-worker.sh
+  ./scripts/start-api.sh
+
+2026-06-18 Static artifact repo layout:
+- User clarified that `C:\Users\user\coding\projects\lead-pipeline\websites`
+  is the Git repository connected to Vercel for static generated output.
+- Moved the existing root-level `audit/` directory into `websites/audit/`.
+- Moved `websites/cleaning_template/` into
+  `websites/templates/cleaning_template/`.
+- Committed those moves in the `websites` repo:
+  `f42cc9f Move static artifacts into websites repo`.
+- Backend defaults now point to the deploy repo:
+  `STATIC_SITES_REPO_ROOT=../websites`
+  `GENERATED_WEBSITES_ROOT=../websites/preview`
+  `AUDIT_REPORTS_ROOT=../websites/audit`
+  `GENERATED_WEBSITE_TEMPLATES_ROOT=../websites/templates`
+- `git_commit_and_push_websites()` now runs git from `STATIC_SITES_REPO_ROOT`
+  and stages only generated preview directories rather than assuming the
+  preview directory itself is a Git repository.
+
+2026-06-18 Campaign/report Notion sync correction:
+- Campaign-level `Needs Website` now means leads missing an existing website.
+  The lead-level `needs_website` checkbox remains a separate manual approval
+  flag for publishing a generated website.
+- Campaign Notion sync now maps `Last Run At` from Firestore
+  `last_completed_at`/`last_run_queued_at` and `Last Resume At` from
+  `last_resume_completed_at`/`last_resume_queued_at`.
+- Resume now writes `last_resume_completed_at` with Firestore
+  `SERVER_TIMESTAMP` and immediately refreshes the campaign Notion page with
+  derived lead/report/outreach rollups so Notion does not stay stuck on stale
+  progress such as `notion_sync_queued`.
+- Manual sync-notion derives campaign rollups from existing Firestore records:
+  leads missing websites, generated website URLs, audit reports, failed/blocked
+  audit statuses, and outreach drafts.
+- Audit report Notion sync in the resume/full-run path now refetches the
+  persisted Firestore report before syncing, so `Created At` uses Firestore's
+  actual timestamp. `Report Url` is still only written when a real public
+  `report_url` exists on the report.
+
+2026-06-18 Audit report publish behavior:
+- Added a static-path git publisher that operates from
+  `STATIC_SITES_REPO_ROOT` and stages only explicit paths under that repo.
+- Full-run and resume now attempt to publish unpublished audit report artifact
+  directories after processing has-website leads when
+  `BASE_URL` is configured.
+- If the `websites` repo push succeeds, each published audit report gets
+  `report_url = {BASE_URL}/audit/{slug}/` in
+  Firestore and the Notion report row is synced again so `Report Url` is
+  populated.
+- If the public base URL is missing or git push fails, local audit files remain
+  available but no public report URL is written.
+- Has-website Gmail draft links now use `BASE_URL` for `/audit/{slug}/`.
+
+2026-06-18 Resumable has-website audit reuse:
+- Full-run and resume now check for an existing audit report before re-scraping
+  and re-auditing a has-website lead.
+- Existing published reports (`report_url` present) are reused immediately; the
+  lead is marked `scrape_status=analyzed`, `website_audit_status=completed`,
+  and the latest audit id/slug are restored.
+- Existing unpublished reports with a valid local artifact are reused and left
+  for the campaign audit publisher to batch commit/push.
+- Existing reports with a slug but missing/stale local artifacts are repaired
+  by regenerating the static HTML artifact from stored report data, then reused.
+- Only leads with no usable existing report continue into the expensive website
+  scrape/appraisal/draft path. Task results now include
+  `reused_existing_audits` so resume/full-run output distinguishes fresh audits
+  from reused reports.
+
+2026-06-18 Logging and observability update:
+- FastAPI now logs every request start/completion/failure through middleware
+  without logging request bodies or secret-bearing values.
+- FastAPI startup now logs the local API/docs URLs from the application itself:
+  `http://127.0.0.1:8000` and `http://127.0.0.1:8000/docs`.
+- Static git publishing now logs each staging step, commit step, push step,
+  command duration, and timeout/failure reason. Git runs non-interactively with
+  `GIT_TERMINAL_PROMPT=0`, SSH batch mode, and explicit command timeouts.
+- Audit report publishing now logs campaign scan count, unpublished artifact
+  count, git publish success, and report URL sync progress as `x/y` while
+  updating Firestore and Notion.
+- Notion sync now logs campaign/lead/report/outreach sync intent, whether it is
+  creating or updating a page, request attempts, retries, status codes, and
+  timing. This makes long report URL syncs visible rather than showing only raw
+  HTTP PATCH lines.
+- Campaign, website, and audit endpoints now emit explicit queue/action logs
+  for background jobs and multi-lead operations.
+
+2026-06-18 Outreach readability template and Gmail links:
+- The deterministic has-website readability outreach subject changed from
+  `website readability` to `Noticed something on your website`.
+- The readability email body now uses the requested owner-friendly wording:
+  it explains that important information can be hard to read on mobile because
+  text does not stand out from the background, links to the short report, and
+  signs off as Andrew Ezeani / Teerdox Technologies.
+- Gmail draft creation still stores a plain-text body, but now also attaches a
+  minimal HTML alternative where `http://` and `https://` URLs are converted
+  to clickable links.
+- The email draft API responses expose `lead_id`, but status updates use the
+  app email draft document ID, not the lead ID.
+- Outreach Notion `Notes` no longer appends lead IDs. The outreach record ID
+  remains visible through the outreach row's `Outreach ID` property.
+- Gmail draft bodies now append `Outreach ID: {email_drafts document id}` through
+  `_create_gmail_draft_with_retries()`, so the exact ID needed for
+  `PATCH /api/outreach/{outreach_id}/status` is visible directly inside
+  Gmail. The app reserves the Firestore draft ID before creating Gmail drafts
+  and then saves the draft record with that same ID.
+
+2026-06-18 Outreach status endpoint rename:
+- Removed `PATCH /api/email-drafts/{draft_id}/status`; there is no deprecated
+  alias.
+- The active status endpoint is now
+  `PATCH /api/outreach/{outreach_id}/status`.
+- The `{outreach_id}` value is the app email_drafts document ID, which is also
+  appended to Gmail draft bodies as `Outreach ID: ...` and stored in Notion as
+  `Outreach ID`.
+- The status endpoint request body now uses `OutreachStatusUpdateRequest` so
+  Swagger shows `{ "status": "sent" }` with the `DraftStatus` enum options
+  instead of incorrectly showing `{ "new_status": "sent" }`.
+
+2026-06-18 Outreach draft regeneration endpoint:
+- Added `POST /api/campaigns/{campaign_id}/outreach/drafts/regenerate`.
+- The request body is `OutreachDraftRegenerateRequest` with documented Swagger
+  fields: `lead_ids`, `status`, `all_emails`, `workflow_type`,
+  `update_gmail_draft`, and `dry_run`.
+- The endpoint is campaign-scoped. If `lead_ids` are supplied, each selected
+  lead is validated against the campaign before updating any outreach copy.
+- Regeneration recalculates subject/body from the current has-website,
+  no-website, or follow-up templates. It never changes the existing outreach
+  `status`.
+- When `all_emails=true`, the status filter is ignored but the campaign and
+  optional workflow/lead filters still apply.
+- When `update_gmail_draft=true`, Gmail draft content is replaced only for
+  outreach records whose status is not `sent` and that still have a
+  `gmail_draft_id`. Sent records are skipped in Gmail but Firestore and Notion
+  subject/body are still updated when `dry_run=false`.
+
+2026-06-18 Maps website platform-domain filtering:
+- Added `app/services/website_filters.py` as the shared source for
+  non-official website domains.
+- Fresh Maps parsing, raw lead normalization, website repair, and maps-data
+  repair now reject non-official website candidates instead of saving them to
+  Firestore.
+- `bookingkoala.com` and `getjobber.com` are blocked, and any domain ending in
+  `.edu` is treated as non-official for the lead website field.
+- Discarded website candidates are intentionally not stored anywhere. If a
+  candidate is blocked and no official-looking replacement exists, the lead
+  remains/moves to `has_website=false`, `missing_website=true`, and
+  `website_domain=""`.
+
+2026-06-19 forced audit replacement and email filtering:
+- POST /api/campaigns/{campaign_id}/audit-websites with force=true now treats an existing audit as an active-result replacement for each lead. It creates the fresh audit artifact, pushes the new static report to the websites repo, then deletes old audit report Firestore docs, removes old audit artifact folders, archives old Notion report pages, and syncs the new Report/Lead state to Notion after publish succeeds. It does not create outreach drafts; use outreach draft regeneration after the force audit when the email copy must be refreshed.
+- app/services/static_website_generator.py now stages static paths with git add -A so deleted audit folders can be committed during replacement cleanup.
+- app/services/email_extractor.py now rejects extracted emails whose domains match the non-official website-domain blocklist, including booking/job platforms and .edu domains, so platform support emails like support@bookingkoala.com are not used as lead emails.
+
+
+2026-06-19 outreach regeneration stale audit fallback:
+- After forced audit replacement deletes old audit report docs, existing has-website outreach drafts may still point at the old report_id. app/workers/tasks.py _report_for_outreach now falls back to lead.latest_audit_report_id for audit drafts when the draft report_id is missing/stale, and draft regeneration updates the outreach report_id to the resolved current report. This fixes audit_report_not_found during regenerate after force=true audit replacement.
+
+2026-06-19 selected has-website workflow endpoint:
+- Added POST /api/campaigns/{campaign_id}/website-leads/process for selected leads that already have a website and need the full has-website path rerun without resuming an entire campaign.
+- The endpoint requires explicit lead_ids. It re-scrapes each selected current website, refreshes saved emails and team members from the page scrape, filters emails through the shared non-official/platform-domain blocklist, syncs the cleaned Lead back to Notion, force-replaces/publishes the active audit by default, and then regenerates existing has-website outreach or creates a new Gmail draft/outreach record if none exists.
+- The plain audit endpoint still audits and returns JSON, but website audit scraping now also refreshes lead contact fields so stale platform emails such as booking/job-platform support addresses are removed when a lead is re-audited.
+- README documents the distinction between /audit-websites and /website-leads/process, including options for force_audit, regenerate_outreach, update_gmail_draft, and manual_verification.
+
+2026-06-19 website-leads/process moved to background:
+- POST /api/campaigns/{campaign_id}/website-leads/process now validates the campaign/request and queues Celery task tasks.process_campaign_website_leads, returning JobResponse instead of blocking the FastAPI request.
+- The Celery task calls the same selected has-website workflow helper and returns the per-lead WebsiteLeadProcessResponse payload through GET /api/jobs/{job_id}/status.
+- This avoids Swagger/browser request timeouts during slow website scraping, audit publishing, Notion sync, and Gmail draft updates.
+
+2026-06-19 unified public URL config:
+- Replaced the old split public URL configuration contract with a single BASE_URL setting.
+- BASE_URL is now used for generated website public URLs, audit report public URLs, outreach email links, audit publish checks, runtime config output, and CORS origin auto-population.
+- .env.example and README now document BASE_URL only. Do not read the user's .env; tell them to set BASE_URL=https://teerdoxlabs.vercel.app or their chosen public domain.
+- Audit email URL builders now strip trailing slashes before appending /audit/{slug}, which avoids double-slash report links.
+
+2026-06-21 mobile-speed outreach template:
+- Updated the deterministic has-website page-speed/page-load outreach template subject to "Your website is slow on mobile".
+- The body now uses the user's shorter owner-facing copy: homepage load time on mobile, fewer calls/quote requests risk, a short audit link, and Andrew Ezeani / Teerdox Technologies signoff.
+- The measured seconds are still extracted from the audit finding text when available, so the email uses the actual recorded load time instead of hard-coding 7.5s for every business.
+
+2026-06-21 outreach email platform tracking:
+- Added email_platform to outreach records for the user's Notion Outreach property "Email Platform".
+- PATCH /api/outreach/{outreach_id}/status now accepts email_platform and requires it when status=sent. Gmail drafts are still created/updated regardless of platform; the platform field only records where the user manually sent the email from.
+- Notion outreach sync writes Email Platform as a select when the property exists.
+- Generated follow-up outreach records copy email_platform from the original sent outreach record so due follow-up rows are self-contained in Notion and can be filtered/grouped by platform.
+- The same status endpoint is now idempotent for sent records: if an outreach row is already status=sent, calling it again with status=sent only updates email_platform and syncs Notion. It does not recalculate sent_at/follow_up_due_at or touch Google Calendar.
+- Email platform is intentionally limited to the API enum values `gmail` and `zoho`; the Notion Outreach database property "Email Platform" should be a Select with those same two options.
+
+2026-06-21 readability outreach A/B testing:
+- Added deterministic A/B assignment for has-website readability audit emails whose original subject was "Noticed something on your website".
+- Variant A keeps the existing subject/body. Variant B uses subject "Something affecting your website on mobile" and the user's shorter mobile-readability copy.
+- The split is based on the audit slug hash, so a given audit keeps the same variant across regeneration. No random runtime choice is used.
+- Outreach records now store `email_template_variant`, API responses expose it, and Notion Outreach Notes include "Template Variant: A/B" so performance can be compared without creating another Notion property.
+
+2026-06-23 single-row outreach lifecycle:
+- Changed follow-up generation from one outreach row per email attempt to one outreach row per lifecycle. Due follow-up drafting now updates the existing outreach record instead of creating a child `email_drafts` record.
+- When a follow-up is drafted, the same outreach row gets a new Gmail draft ID, updated subject/body, `status=drafted`, and `stage=follow_up_1` or `follow_up_2`. The previous/current messages are appended to `notes` via `app.services.outreach_history.append_message_history`.
+- Status updates now sync outreach rows to Notion for every status, not only `sent`. The scheduling/calendar logic still only runs when moving into `sent`.
+- Notion Outreach sync exposes `Stage` again. Recommended options: `initial`, `follow_up_1`, `follow_up_2`.
+- `sent_at` now records the send time for the current stage when transitioning from drafted to sent. Re-sending a `status=sent` update for an already-sent row remains idempotent and only updates metadata such as email_platform.
+
+2026-06-23 campaign delete consolidation:
+- Replaced the three public delete routes with one scoped endpoint: `POST /api/campaigns/delete`.
+- Delete scope is now a required query parameter: `?scope=selected` or `?scope=all`. The JSON body contains `confirm="DELETE_CAMPAIGNS"` and optional `campaign_ids`.
+- `scope=selected` requires at least one `campaign_ids` entry. `scope=all` ignores `campaign_ids` and queues deletion for every campaign.
+- `scope=all` is all-or-nothing. If any campaign is running or analyzing, the bulk delete task returns `status=blocked` and deletes nothing. `scope=selected` keeps the older behavior of skipping selected campaigns that are running/analyzing.
+- Removed the user-facing `archived` campaign status enum value. Notion page archiving remains internal cleanup behavior because Notion deletion is represented as `archived=true`.
+
+2026-06-23 closed lead cleanup expansion:
+- `POST /api/campaigns/{campaign_id}/websites/cleanup` no longer only removes generated preview folders.
+- Cleanup eligibility is now based on outreach terminal state: any lead in the campaign with at least one outreach row where `status=closed` is eligible.
+- `dry_run=true` previews which leads would be removed and shows outreach/report/static-artifact counts.
+- `dry_run=false` deletes the closed lead and dependent records: all outreach rows for that lead, all audit/no-website reports for that lead, the lead row itself, linked Gmail drafts when present, linked generated website folders, linked audit artifact folders, and linked Notion Lead/Report/Outreach pages by archiving them.
+- The cleanup intentionally leaves the parent campaign and shared campaign search-evidence records intact.
+- When static artifact folders were removed, the endpoint commits and pushes those deletions from the sibling `websites` repo so hosted `/preview/{slug}` and `/audit/{slug}` pages are removed as well.
+
+2026-06-23 mobile website issue outreach template update:
+- The deterministic has-website email branch for layout-shift/CLS findings no longer sends subject `mobile website issue`.
+- `layout stability` findings now send subject `Issue affecting visitors on your website` with the user's new copy about content shifting while the page loads and the resulting interaction friction.
+- `mobile layout` findings no longer reuse that subject; they fall back to the generic `quick website note` branch so the subject stays specific to layout-shift issues.
+
+2026-06-23 mobile layout outreach template update:
+- The deterministic has-website email branch for `mobile layout` findings no longer uses subject `quick website note`.
+- `mobile layout` findings now send subject `Website issue affecting mobile visitors` with the user's new copy about content extending beyond the mobile screen width and causing navigation friction.
+- This change is scoped only to the `mobile layout` category. `conversion path` and generic fallback scenarios still use `quick website note`.
+
+2026-06-23 mobile usability outreach template update:
+- Added a dedicated deterministic has-website email branch for `mobile usability` findings (small/tightly spaced tap targets on mobile).
+- `mobile usability` findings now send subject `Mobile issue affecting bookings on your website` with the user's new copy about buttons/click targets being too small or tightly spaced on mobile and the resulting booking/contact friction.
+- This change is scoped only to `mobile usability`. Desktop `usability`, `conversion path`, and the generic `quick website note` fallback were left unchanged.
+
+
+2026-06-23 due follow-up API cleanup:
+- Removed `batch_size` from the public `POST /api/outreach/follow-ups/due` request body. The API now exposes only business-facing filters (`campaign_id`, `lead_ids`) and the `limit` safety cap.
+- The Celery task still chunks work internally with a fixed batch size, but that implementation detail is no longer shown in Swagger or expected from callers.
+- README now describes `limit` as the public safeguard for sweeping due follow-ups.
+2026-06-23 due follow-up internal chunk size reduction:
+- Reduced the internal chunk size for `POST /api/outreach/follow-ups/due` from 25 to 10 records per batch.
+- The public `limit` request field still controls the total number of due outreach rows processed in one job. A request with `limit=50` now runs as one Celery job split into five internal batches of 10.
+- This change is meant to reduce burstiness against Gmail, Notion, and Firestore while keeping logs easier to follow.
+
+2026-06-23 email template reference document:
+- Added `EMAIL_TEMPLATES.md` at the project root (`lead-pipeline/EMAIL_TEMPLATES.md`).
+- The file captures the current deterministic outreach templates by workflow/category in the user's requested format: cold email, follow up 1, follow up 2.
+- It includes both no-website and has-website flows, including the current readability A/B variants and the shared follow-up copy pattern.
+
+2026-06-23 updated-only email template reference:
+- Added `UPDATED_EMAIL_TEMPLATES.md` at the project root (`lead-pipeline/UPDATED_EMAIL_TEMPLATES.md`).
+- This file is separate from `EMAIL_TEMPLATES.md` and contains only the recently updated outreach templates rather than the full catalog.
+
+2026-06-23 follow-up draft platform note:
+- Follow-up Gmail draft bodies now include `Original email platform: gmail/zoho.` when the parent outreach row has `email_platform` set.
+- This is only a drafting aid for manual sending. It does not change routing logic or status behavior.
+
+2026-06-24 outreach regenerate follow-up fix:
+- Fixed _regenerated_outreach_email_content(...) so outreach rows already advanced to follow_up_* are regenerated with the follow-up template even when the app reuses the same Firestore outreach row instead of a separate child draft row.
+- Added _is_follow_up_outreach(...) to treat stage=follow_up_* or follow_up_count>0 as follow-up context during regeneration.
+- Added targeted unit coverage to prevent regressions where regenerate rewrites a follow-up draft back into the initial cold email format.
+
+
+2026-06-24 outreach notes slot cleanup:
+- ppend_message_history(...) is now an upsert by stage, not an append-only log. Each stage keeps a single entry in Notes: Initial Email, Follow Up 1, Follow Up 2, etc.
+- Regeneration no longer creates Regenerated Draft note sections. It rewrites the existing stage entry using the row's current status semantics.
+- Sending a follow-up now replaces that stage's Draft note with a Sent note instead of leaving both behind, so Notes stays capped at one entry per stage.
+
+
+2026-06-24 follow-up template refresh:
+- Replaced the old generic Re: follow-up subjects with deterministic stage-specific subjects.
+- has_website follow-ups are now universal across all audit categories: Following up: website audit for [business_name] and Following up: closing the loop on your website audit.
+- 
+o_website follow-ups now use the new preview-specific subject/body pair for ollow_up_1 and ollow_up_2.
+- Runtime still preserves the optional Original email platform: ... note inside the follow-up draft body when email_platform is set on the outreach row.
+- Updated EMAIL_TEMPLATES.md and UPDATED_EMAIL_TEMPLATES.md to match the new deterministic follow-up copy.
+
+
+2026-06-24 second follow-up interval override:
+- Added OUTREACH_FOLLOW_UP_2_INTERVAL_DAYS to config and .env.example.
+- OUTREACH_FOLLOW_UP_INTERVAL_DAYS remains the interval for the first follow-up.
+- When ollow_up_1 is marked sent, the next due date for ollow_up_2 now uses OUTREACH_FOLLOW_UP_2_INTERVAL_DAYS when present, otherwise it falls back to the base interval.
+- The due-follow-up draft generator now also stores that second interval on the ollow_up_1 drafted outreach row so subsequent scheduling stays consistent.
+

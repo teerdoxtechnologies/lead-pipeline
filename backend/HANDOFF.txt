@@ -1,5 +1,5 @@
 Lead Pipeline / Agency Scraper Handoff
-Last updated: 2026-06-09
+Last updated: 2026-09-23
 
 Important operating rule
 ------------------------
@@ -2127,3 +2127,23 @@ o_website follow-ups now use the new preview-specific subject/body pair for oll
 - When ollow_up_1 is marked sent, the next due date for ollow_up_2 now uses OUTREACH_FOLLOW_UP_2_INTERVAL_DAYS when present, otherwise it falls back to the base interval.
 - The due-follow-up draft generator now also stores that second interval on the ollow_up_1 drafted outreach row so subsequent scheduling stays consistent.
 
+
+2026-09-23 git strategy (single account, monorepo):
+- Root monorepo: teerdoxtechnologies/lead-pipeline (public). Layout is
+  backend/ + frontend/ + root docs. Identity teerdoxtechnologies
+  <teerdoxtechnologies@gmail.com> is set repo-local. Old agency-scraper/ dir
+  was renamed to backend/; old repo ezeaniiandrew/lead-pipeline holds backend
+  history through 50483e6, plus local bundle lead-pipeline/agency-scraper-backup.bundle.
+- websites/ stays a SEPARATE repo (machine-generated output, Vercel deploys,
+  backend auto-publishes into it). Root .gitignore ignores it. Still to do:
+  repoint its remote to the new account, reconnect Vercel, update base_url.
+- Credentials are split by environment ON PURPOSE, keep it that way:
+  Windows git = ezeaniiandrew, WSL gh = teerdoxtechnologies (gh auth setup-git
+  done). Pushes to the new repo MUST go through WSL; Windows-side push gets 403.
+- Backend .venv is a symlink to ext4 (/home/andrewezeani/.venvs/lead-backend)
+  because the old venv baked in the pre-rename path. Recreated + deps
+  reinstalled 2026-09-23. Root .gitignore covers the symlink (.venv/ and .venv).
+- Line endings enforced LF everywhere via root .gitattributes
+  (* text=auto eol=lf) so Windows git and WSL git always agree.
+- Standing user rules: never read .env; no code/state edits, commits, or
+  pushes without explicit permission each time.

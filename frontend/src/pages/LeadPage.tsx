@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react';
+import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
@@ -24,6 +24,7 @@ export default function LeadPage() {
   const [msg, setMsg] = useState('');
   const [pending, setPending] = useState<Outreach | null>(null);
   const [sending, setSending] = useState(false);
+  const [newEmail, setNewEmail] = useState('');
 
   const leadQ = useQuery({ queryKey: ['lead', leadId], queryFn: () => api.lead(leadId) });
   const diagQ = useQuery({ queryKey: ['lead-diag', leadId], queryFn: () => api.leadDiagnostics(leadId) });
@@ -61,13 +62,46 @@ export default function LeadPage() {
     qc.invalidateQueries({ queryKey: ['lead-diag', leadId] });
     qc.invalidateQueries({ queryKey: ['drafts-lead', leadId] });
     qc.invalidateQueries({ queryKey: ['drafts'] });
+    qc.invalidateQueries({ queryKey: ['website-candidates'] });
   };
+  const onErr = (e: unknown) => toast.error(e instanceof Error ? e.message : String(e));
+
+  const flagMut = useMutation({
+    mutationFn: (value: boolean) => api.updateLead(leadId, { needs_website: value }),
+    onSuccess: (_d, value) => {
+      toast.success(value ? 'Marked for a website build — synced to Notion.' : 'Unmarked — excluded from website builds.');
+      setNewEmail('');
+      invalidate();
+    },
+    onError: onErr,
+  });
+  const emailsMut = useMutation({
+    mutationFn: (emails: string[]) => api.updateLead(leadId, { emails }),
+    onSuccess: () => {
+      toast.success('Emails saved — synced to Notion.');
+      setNewEmail('');
+      invalidate();
+    },
+    onError: onErr,
+  });
+
+  function addEmail(address: string) {
+    const current = lead?.emails ?? [];
+    if (current.some((e) => e.toLowerCase() === address.toLowerCase())) {
+      toast.error('That email is already on this lead.');
+      return;
+    }
+    emailsMut.mutate([...current, address]);
+  }
+
+  function removeEmail(address: string) {
+    emailsMut.mutate((lead?.emails ?? []).filter((e) => e !== address));
+  }
   const onJob = (data: { job_id?: string }) => {
     if (data?.job_id) setLastJobId(data.job_id);
     setMsg('Job queued — see Jobs below for live state.');
     invalidate();
   };
-  const onErr = (e: unknown) => toast.error(e instanceof Error ? e.message : String(e));
   const onDone = (m: string) => { setMsg(m); invalidate(); };
 
   const auditMut = useMutation({
@@ -209,10 +243,47 @@ export default function LeadPage() {
           <Fields>
             <Field label="Emails">
               {(lead.emails?.length ?? 0) > 0 ? (
-                <span>{lead.emails!.map((e) => <a key={e} href={`mailto:${e}`}>{e}</a>).reduce<ReactNode[]>((acc, el, i) => (i ? [...acc, ', ', el] : [el]), [])}</span>
+                <span>
+                  {lead.emails!.map((e) => (
+                    <span key={e} className="row tight" style={{ display: 'inline-flex', marginRight: 12 }}>
+                      <a href={`mailto:${e}`}>{e}</a>
+                      <button
+                        className="ghost btn-sm"
+                        style={{ minHeight: 26, padding: '1px 8px' }}
+                        onClick={() => removeEmail(e)}
+                        disabled={emailsMut.isPending}
+                        aria-label={`Remove ${e}`}
+                        title="Remove this email address"
+                      >
+                        ×
+                      </button>
+                    </span>
+                  ))}
+                </span>
               ) : (
                 <span><StatusPill status="missing email" tone="warn" /> <span className="faint small">add one before building a site</span></span>
               )}
+              <form
+                className="row tight"
+                style={{ marginTop: 8 }}
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  if (newEmail.trim()) addEmail(newEmail.trim());
+                }}
+              >
+                <input
+                  aria-label="Add email address"
+                  placeholder="name@business.com"
+                  value={newEmail}
+                  onChange={(e) => setNewEmail(e.target.value)}
+                  style={{ minWidth: 220 }}
+                  type="email"
+                  required
+                />
+                <button type="submit" className="ghost btn-sm" disabled={emailsMut.isPending || !newEmail.trim()}>
+                  Add email
+                </button>
+              </form>
             </Field>
             <Field label="Phone">
               {lead.phone ? <a href={`tel:${lead.phone}`}>{lead.phone}</a> : <span className="faint">none</span>}
@@ -252,7 +323,18 @@ export default function LeadPage() {
                 {lead?.website ? <a href={lead.website} target="_blank" rel="noreferrer">{lead.website}</a> : <span className="faint">none — build candidate</span>}
               </Field>
               <Field label="Marked for build">
-                {contact?.needs_website ? <StatusPill status="needs website" tone="info" /> : <span className="faint">flag off</span>}
+                <span className="row tight">
+                  {contact?.needs_website ? <StatusPill status="needs website" tone="info" /> : <span className="faint">flag off</span>}
+                  <button
+                    className="ghost btn-sm"
+                    onClick={() => flagMut.mutate(!contact?.needs_website)}
+                    disabled={flagMut.isPending}
+                    title={contact?.needs_website ? 'Exclude this lead from website builds.' : 'Opt this lead in for a generated website. Syncs to Notion.'}
+                  >
+                    {flagMut.isPending ? 'Saving…' : contact?.needs_website ? 'Unmark' : 'Mark for build'}
+                  </button>
+                </span>
+                <div className="cell-sub">Opt-in for a generated site. Syncs to Notion so imports cannot revert it.</div>
               </Field>
               <Field label="Generated site">
                 {gen?.built ? (

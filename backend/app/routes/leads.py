@@ -2,6 +2,7 @@
 Leads routes:
   GET /campaigns/{campaign_id}/leads  — paginated leads list
   GET /leads/{lead_id}               — single lead with report + draft
+  PATCH /leads/{lead_id}             — manual lead edits (strict allowlist)
 """
 from __future__ import annotations
 
@@ -12,13 +13,16 @@ from fastapi import APIRouter, HTTPException, Query, status
 
 from app.firebase import (
     AUDIT_REPORTS,
+    CAMPAIGNS,
     EMAIL_DRAFTS,
     LEADS,
     NO_WEBSITE_REPORTS,
     get_document,
     query_collection,
+    update_document,
 )
-from app.schemas import LeadDetailResponse, LeadResponse, ScrapeStatus
+from app.schemas import LeadDetailResponse, LeadResponse, LeadUpdateRequest, ScrapeStatus
+from app.services.notion_service import get_notion_sync
 from app.services.static_website_generator import eligible_for_static_website
 from app.workers.tasks import _maps_repair_fields_for_lead
 
@@ -123,6 +127,73 @@ async def get_lead(lead_id: str):
         no_website_report=no_website_report,
         email_draft=email_draft,
     )
+
+
+@router.patch(
+    "/leads/{lead_id}",
+    response_model=LeadResponse,
+    summary="Manually edit a lead (needs_website flag and emails only)",
+)
+async def update_lead(lead_id: str, body: LeadUpdateRequest):
+    """
+    Dashboard edits for the two fields that gate website builds. Anything
+    else in the body is ignored. Pushes the change to Notion so the next
+    pull cannot revert it.
+    """
+    doc = get_document(LEADS, lead_id)
+    if doc is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Lead '{lead_id}' not found.",
+        )
+
+    payload: dict = {}
+    if body.needs_website is not None:
+        payload["needs_website"] = bool(body.needs_website)
+    if body.emails is not None:
+        cleaned: list[str] = []
+        for email in body.emails:
+            address = str(email or "").strip().lower()
+            if not address:
+                continue
+            if "@" not in address or "." not in address.split("@")[-1]:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Invalid email address: '{email}'.",
+                )
+            if address not in cleaned:
+                cleaned.append(address)
+        if len(cleaned) > 20:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="At most 20 email addresses per lead.",
+            )
+        payload["emails"] = cleaned
+        payload["has_email"] = bool(cleaned)
+
+    if not payload:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Nothing to update: send needs_website and/or emails.",
+        )
+
+    update_document(LEADS, lead_id, payload)
+    updated = {**doc, **payload}
+
+    try:
+        campaign = get_document(CAMPAIGNS, updated.get("campaign_id", "")) or {}
+        notion_page_id = get_notion_sync().sync_lead(
+            lead_id,
+            updated,
+            campaign_notion_page_id=campaign.get("notion_page_id"),
+        )
+        if notion_page_id and notion_page_id != doc.get("notion_page_id"):
+            update_document(LEADS, lead_id, {"notion_page_id": notion_page_id})
+            updated["notion_page_id"] = notion_page_id
+    except Exception as exc:
+        logger.warning("[Leads] Lead %s Notion push after manual edit failed: %s", lead_id, exc)
+
+    return _serialise_lead(updated)
 
 
 @router.get(

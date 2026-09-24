@@ -42,11 +42,13 @@ export const api = {
     return req<Lead[]>(`/api/campaigns/${campaignId}/leads?${q.toString()}`);
   },
   lead: (leadId: string) => req<LeadDetail>(`/api/leads/${leadId}`),
+  updateLead: (leadId: string, body: { needs_website?: boolean; emails?: string[] }) =>
+    req<Lead>(`/api/leads/${leadId}`, { method: 'PATCH', body: JSON.stringify(body) }),
   leadDiagnostics: (leadId: string) => req<LeadDiagnostics>(`/api/leads/${leadId}/diagnostics`),
   websitePreview: (leadId: string) => req<{ preview_url: string }>(`/api/leads/${leadId}/website-preview`),
 
   auditWebsites: (campaignId: string, body: { lead_ids?: string[]; force?: boolean; manual_verification?: boolean }) =>
-    req<unknown>(`/api/campaigns/${campaignId}/audit-websites`, { method: 'POST', body: JSON.stringify(body) }),
+    req<Job>(`/api/campaigns/${campaignId}/audit-websites`, { method: 'POST', body: JSON.stringify(body) }),
   auditBlocked: (campaignId: string) =>
     req<unknown>(`/api/campaigns/${campaignId}/audit-blocked-websites`, { method: 'POST', body: JSON.stringify({}) }),
   processWebsiteLeads: (campaignId: string, leadIds: string[]) =>
@@ -95,6 +97,23 @@ export const api = {
     req<Job>(`/api/campaigns/${campaignId}/outreach/drafts/regenerate`, {
       method: 'POST',
       body: JSON.stringify({ dry_run: false, all_emails: false, update_gmail_draft: true }),
+    }),
+
+  cleanupPreview: (campaignIds?: string[]) => {
+    const q = new URLSearchParams();
+    for (const id of campaignIds ?? []) q.append('campaign_ids', id);
+    const s = q.toString();
+    return req<CleanupPreview>(`/api/campaigns/cleanup-preview${s ? `?${s}` : ''}`);
+  },
+  deleteCampaigns: (scope: 'selected' | 'all', campaignIds?: string[]) =>
+    req<Job>(`/api/campaigns/delete?scope=${scope}`, {
+      method: 'POST',
+      body: JSON.stringify({ campaign_ids: campaignIds ?? null, confirm: 'DELETE_CAMPAIGNS' }),
+    }),
+  cleanupWebsites: (campaignId: string, body: { lead_ids?: string[]; dry_run?: boolean }) =>
+    req<WebsiteCleanupResult>(`/api/campaigns/${campaignId}/websites/cleanup`, {
+      method: 'POST',
+      body: JSON.stringify(body),
     }),
 
   queueExport: (campaignIds?: string[]) =>

@@ -58,6 +58,13 @@ class ReportType(str, Enum):
 # ---------------------------------------------------------------------------
 
 
+class LeadUpdateRequest(BaseModel):
+    """Manual lead edits from the dashboard. Strict allowlist: nothing else is writable."""
+
+    needs_website: Optional[bool] = None
+    emails: Optional[List[str]] = None
+
+
 class CampaignCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=200)
     niche: str = Field(..., min_length=1, max_length=100)
@@ -330,6 +337,7 @@ class CampaignCleanupPreviewResponse(BaseModel):
     no_website_reports: int = 0
     email_drafts: int = 0
     notion_pages: int = 0
+    notion_pages_unknown: bool = False
 
 
 # ---------------------------------------------------------------------------

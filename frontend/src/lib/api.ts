@@ -30,8 +30,16 @@ export const api = {
   resume: (id: string) => req<Job>(`/api/campaigns/${id}/resume`, { method: 'POST' }),
   cancel: (id: string) => req<unknown>(`/api/campaigns/${id}/cancel`, { method: 'POST' }),
   repairWebsites: (id: string) => req<Job>(`/api/campaigns/${id}/repair-websites`, { method: 'POST' }),
+  repairMapsData: (id: string) => req<Job>(`/api/campaigns/${id}/repair-maps-data`, { method: 'POST' }),
+  repairMapsDataPreview: (id: string) =>
+    req<{ campaign_id: string; leads: number; preview: unknown[] }>(`/api/campaigns/${id}/repair-maps-data/preview`),
   syncNotion: (id: string, force = false) =>
     req<Job>(`/api/campaigns/${id}/sync-notion${force ? '?force=true' : ''}`, { method: 'POST' }),
+  generateOutreachDrafts: (campaignId: string, body?: { lead_ids?: string[] }) =>
+    req<Job>(`/api/campaigns/${campaignId}/outreach/drafts`, {
+      method: 'POST',
+      body: JSON.stringify(body ?? {}),
+    }),
 
   jobStatus: (jobId: string) => req<JobStatus>(`/api/jobs/${jobId}/status`),
 

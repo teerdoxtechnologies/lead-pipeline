@@ -107,10 +107,14 @@ export default function CampaignDetailPage() {
   const cancelMut = useMutation({ mutationFn: () => api.cancel(id), onSuccess: invalidate });
   const auditMut = useMutation({ mutationFn: () => api.auditWebsites(id, {}), onSuccess: (d) => onJob(d, 'Run audits') });
   const regenMut = useMutation({ mutationFn: () => api.regenerateDrafts(id), onSuccess: (d) => onJob(d, 'Regenerate drafts') });
+  const repairMapsMut = useMutation({ mutationFn: () => api.repairMapsData(id), onSuccess: (d) => onJob(d, 'Repair Maps data') });
+  const repairWebsitesMut = useMutation({ mutationFn: () => api.repairWebsites(id), onSuccess: (d) => onJob(d, 'Repair websites') });
+  const syncNotionMut = useMutation({ mutationFn: () => api.syncNotion(id), onSuccess: (d) => onJob(d, 'Sync Notion') });
+  const genDraftsMut = useMutation({ mutationFn: () => api.generateOutreachDrafts(id), onSuccess: (d) => onJob(d, 'Generate drafts') });
 
   const queueBusy = fullMut.isPending || scrapeMut.isPending || resumeMut.isPending || cancelMut.isPending;
 
-  const actionErr = [fullMut, scrapeMut, resumeMut, cancelMut, auditMut, regenMut]
+  const actionErr = [fullMut, scrapeMut, resumeMut, cancelMut, auditMut, regenMut, repairMapsMut, repairWebsitesMut, syncNotionMut, genDraftsMut]
     .map((m) => (m.error instanceof Error ? m.error.message : m.error ? String(m.error) : ''))
     .filter(Boolean)[0];
   const err =
@@ -444,6 +448,29 @@ export default function CampaignDetailPage() {
         ) : (
           <EmptyState title="No website data" body="The website pipeline endpoint did not return data." />
         )}
+      </Section>
+
+      <Section
+        title="Repairs, drafts & sync"
+        hint="One-off tools: re-check Maps data, fix website flags, generate missing drafts, and re-sync Notion."
+      >
+        <div className="row" style={{ flexWrap: 'wrap', gap: 10 }}>
+          <button className="ghost btn-sm" onClick={() => genDraftsMut.mutate()} disabled={genDraftsMut.isPending}>
+            {genDraftsMut.isPending ? 'Queuing…' : 'Generate drafts'}
+          </button>
+          <button className="ghost btn-sm" onClick={() => repairMapsMut.mutate()} disabled={repairMapsMut.isPending}>
+            {repairMapsMut.isPending ? 'Queuing…' : 'Repair Maps data'}
+          </button>
+          <button className="ghost btn-sm" onClick={() => repairWebsitesMut.mutate()} disabled={repairWebsitesMut.isPending}>
+            {repairWebsitesMut.isPending ? 'Queuing…' : 'Repair websites'}
+          </button>
+          <button className="ghost btn-sm" onClick={() => syncNotionMut.mutate()} disabled={syncNotionMut.isPending}>
+            {syncNotionMut.isPending ? 'Queuing…' : 'Sync Notion'}
+          </button>
+        </div>
+        <p className="small muted" style={{ marginTop: 8 }}>
+          Generate drafts fills gaps for published sites with no outreach yet. Repairs re-derive website flags and Maps fields.
+        </p>
       </Section>
 
       <Section

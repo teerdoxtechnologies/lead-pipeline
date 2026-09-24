@@ -1,8 +1,11 @@
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { toast } from 'sonner';
 import { api, type Outreach } from '../lib/api';
 import { relTime } from '../lib/format';
+import ConfirmSendDialog from '../components/ConfirmSendDialog';
+import { trackJob } from '../lib/jobs';
 import { EmptyState, Section, SkeletonRows, StatCard, StatusPill } from '../components/ui';
 
 export default function OutreachPage() {
@@ -11,7 +14,8 @@ export default function OutreachPage() {
   const [campaignFilter, setCampaignFilter] = useState('');
   const [platform, setPlatform] = useState('gmail');
   const [actionError, setActionError] = useState('');
-  const [notice, setNotice] = useState('');
+  const [pending, setPending] = useState<Outreach | null>(null);
+  const [sending, setSending] = useState(false);
   const [now] = useState(() => Date.now());
   const qc = useQueryClient();
 
@@ -40,26 +44,34 @@ export default function OutreachPage() {
   }, {});
   const dueCount = visible.filter((o) => o.follow_up_due_at && new Date(o.follow_up_due_at).getTime() < now && o.status === 'sent').length;
 
-  async function markSent(o: Outreach) {
-    const oid = String(o.id ?? o.outreach_id ?? '');
-    if (!oid) return;
+  async function confirmSend() {
+    const o = pending;
+    const oid = o ? String(o.id ?? o.outreach_id ?? '') : '';
+    if (!o || !oid) return;
+    setSending(true);
     setActionError('');
-    setNotice('');
     try {
-      await api.markSent(oid, platform);
-      setNotice(`Marked ${oid.slice(0, 8)}… as sent.`);
+      const updated = await api.markSent(oid, platform);
+      toast.success(
+        updated.follow_up_due_at
+          ? `Sent ${String(o.stage ?? 'initial').replace(/_/g, ' ')} — follow-up due ${relTime(updated.follow_up_due_at)}.`
+          : `Sent ${String(o.stage ?? 'initial').replace(/_/g, ' ')} — no further follow-ups scheduled.`,
+      );
+      setPending(null);
       qc.invalidateQueries({ queryKey: ['drafts'] });
     } catch (e) {
       setActionError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSending(false);
     }
   }
 
   async function queueDue() {
     setActionError('');
-    setNotice('');
     try {
-      await api.dueFollowUps(undefined, 25);
-      setNotice('Queued due follow-ups — watch Jobs on the relevant campaign pages.');
+      const job = await api.dueFollowUps(undefined, 25);
+      if (job?.job_id) trackJob(job.job_id, 'Queue due follow-ups');
+      toast.success('Queued due follow-ups — watch Jobs on the relevant campaign pages.');
     } catch (e) {
       setActionError(e instanceof Error ? e.message : String(e));
     }
@@ -94,7 +106,15 @@ export default function OutreachPage() {
       </div>
 
       {errMsg && <div className="err" role="alert">{errMsg}</div>}
-      {notice && <div className="ok-msg" role="status">{notice}</div>}
+      {pending && (
+        <ConfirmSendDialog
+          draft={pending}
+          platform={platform}
+          busy={sending}
+          onConfirm={confirmSend}
+          onClose={() => { if (!sending) setPending(null); }}
+        />
+      )}
 
       <div className="stat-grid" role="group" aria-label="Outreach totals">
         {['drafted', 'sent', 'closed', 'converted'].map((s) => (
@@ -181,7 +201,7 @@ export default function OutreachPage() {
                       <td className="small faint num">{relTime(o.follow_up_due_at ?? o.created_at)}</td>
                       <td>
                         {String(o.status) !== 'sent' ? (
-                          <button className="ghost btn-sm" onClick={() => markSent(o)}>Mark sent</button>
+                          <button className="ghost btn-sm" onClick={() => setPending(o)}>Mark sent</button>
                         ) : <span className="faint small">done</span>}
                       </td>
                     </tr>

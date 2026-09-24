@@ -1,7 +1,9 @@
 import { useState, type ReactNode } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { api } from '../lib/api';
+import { toast } from 'sonner';
+import { api, type Outreach } from '../lib/api';
+import ConfirmSendDialog from '../components/ConfirmSendDialog';
 import { useSiteUrls } from '../lib/site';
 import { fmtDate, isActiveJob, relTime } from '../lib/format';
 import { isSent, leadPipeline, outreachFor } from '../lib/leadStage';
@@ -20,6 +22,8 @@ export default function LeadPage() {
   const [lastJobId, setLastJobId] = useState('');
   const [platform, setPlatform] = useState('gmail');
   const [msg, setMsg] = useState('');
+  const [pending, setPending] = useState<Outreach | null>(null);
+  const [sending, setSending] = useState(false);
 
   const leadQ = useQuery({ queryKey: ['lead', leadId], queryFn: () => api.lead(leadId) });
   const diagQ = useQuery({ queryKey: ['lead-diag', leadId], queryFn: () => api.leadDiagnostics(leadId) });
@@ -49,7 +53,7 @@ export default function LeadPage() {
     setMsg('Job queued — see Jobs below for live state.');
     invalidate();
   };
-  const onErr = (e: unknown) => setMsg(e instanceof Error ? e.message : String(e));
+  const onErr = (e: unknown) => toast.error(e instanceof Error ? e.message : String(e));
   const onDone = (m: string) => { setMsg(m); invalidate(); };
 
   const auditMut = useMutation({
@@ -81,13 +85,21 @@ export default function LeadPage() {
     refetchInterval: (q2) => (isActiveJob(q2.state.data?.status) || !q2.state.data ? 3000 : false),
   });
 
-  async function markSent(draftId: string) {
+  async function confirmSend() {
+    const oid = pending ? String(pending.id ?? pending.outreach_id ?? '') : '';
+    if (!pending || !oid) return;
+    setSending(true);
     setMsg('');
     try {
-      await api.markSent(draftId, platform);
-      setMsg('Marked sent — follow-up scheduling starts from the send time.');
+      const updated = await api.markSent(oid, platform);
+      toast.success(
+        updated.follow_up_due_at
+          ? `Sent ${String(pending.stage ?? 'initial').replace(/_/g, ' ')} — follow-up due ${relTime(updated.follow_up_due_at)}.`
+          : `Sent ${String(pending.stage ?? 'initial').replace(/_/g, ' ')} — no further follow-ups scheduled.`,
+      );
+      setPending(null);
       invalidate();
-    } catch (e) { onErr(e); }
+    } catch (e) { onErr(e); } finally { setSending(false); }
   }
 
   const err = leadQ.error instanceof Error ? leadQ.error.message : leadQ.error ? String(leadQ.error) : '';
@@ -153,6 +165,15 @@ export default function LeadPage() {
 
       {err && <div className="err" role="alert">{err}</div>}
       {msg && <div className="ok-msg" role="status">{msg}</div>}
+      {pending && (
+        <ConfirmSendDialog
+          draft={pending}
+          platform={platform}
+          busy={sending}
+          onConfirm={confirmSend}
+          onClose={() => { if (!sending) setPending(null); }}
+        />
+      )}
 
       {lead && (
         <Section
@@ -365,7 +386,7 @@ export default function LeadPage() {
                       <option value="gmail">gmail</option>
                       <option value="zoho">zoho</option>
                     </select>{' '}
-                    <button className="ghost btn-sm" onClick={() => markSent(oid)}>Mark sent</button>
+                    <button className="ghost btn-sm" onClick={() => setPending(d)}>Mark sent</button>
                   </span>
                 ) : null}
               </div>

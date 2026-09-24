@@ -1,11 +1,16 @@
 import { useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
+import { toast } from 'sonner';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { fmtDate, relTime } from '../lib/format';
+import { parseOutreachNotes } from '../lib/outreachNotes';
+import { trackJob } from '../lib/jobs';
+import ConfirmSendDialog from '../components/ConfirmSendDialog';
 import { Breadcrumbs, EmptyState, Field, Fields, Section, StatusPill, Steps, type Step } from '../components/ui';
 
 const SENT = new Set(['sent', 'closed', 'converted']);
+
 
 function isReplied(replyStatus?: string | null): boolean {
   const r = String(replyStatus ?? '');
@@ -16,7 +21,8 @@ export default function OutreachDetailPage() {
   const { draftId = '' } = useParams();
   const qc = useQueryClient();
   const [platform, setPlatform] = useState('gmail');
-  const [msg, setMsg] = useState('');
+  const [pending, setPending] = useState(false);
+  const [sending, setSending] = useState(false);
   const [now] = useState(() => Date.now());
 
   const draftQ = useQuery({ queryKey: ['draft', draftId], queryFn: () => api.draft(draftId) });
@@ -39,26 +45,34 @@ export default function OutreachDetailPage() {
     return arr;
   }, [threadQ.data]);
 
-  async function markSent() {
-    setMsg('');
+  async function confirmSend() {
+    if (!d) return;
+    setSending(true);
     try {
-      await api.markSent(draftId, platform);
-      setMsg('Marked sent — follow-up scheduling starts from the send time.');
+      const updated = await api.markSent(draftId, platform);
+      toast.success(
+        updated.follow_up_due_at
+          ? `Sent ${String(d.stage ?? 'initial').replace(/_/g, ' ')} — follow-up due ${relTime(updated.follow_up_due_at)}.`
+          : `Sent ${String(d.stage ?? 'initial').replace(/_/g, ' ')} — no further follow-ups scheduled.`,
+      );
+      setPending(false);
       qc.invalidateQueries({ queryKey: ['draft', draftId] });
       qc.invalidateQueries({ queryKey: ['drafts'] });
       qc.invalidateQueries({ queryKey: ['drafts-lead'] });
     } catch (e) {
-      setMsg(e instanceof Error ? e.message : String(e));
+      toast.error(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSending(false);
     }
   }
 
   async function queueFollowUp() {
-    setMsg('');
     try {
-      await api.dueFollowUps(d?.campaign_id ?? undefined, 10, d?.lead_id ? [d.lead_id] : undefined);
-      setMsg('Queued follow-up generation for this lead.');
+      const job = await api.dueFollowUps(d?.campaign_id ?? undefined, 10, d?.lead_id ? [d.lead_id] : undefined);
+      if (job?.job_id) trackJob(job.job_id, `Follow-up · ${String(d?.subject ?? draftId).slice(0, 40)}`);
+      toast.success('Queued follow-up generation for this lead.');
     } catch (e) {
-      setMsg(e instanceof Error ? e.message : String(e));
+      toast.error(e instanceof Error ? e.message : String(e));
     }
   }
 
@@ -134,14 +148,22 @@ export default function OutreachDetailPage() {
             <option value="zoho">zoho</option>
           </select>
           {!sent && (
-            <button onClick={markSent} disabled={draftQ.isLoading} title="Records that you sent this draft in Gmail, which starts follow-up scheduling.">Mark sent</button>
+            <button onClick={() => setPending(true)} disabled={draftQ.isLoading} title="Records that you sent this draft in Gmail, which starts follow-up scheduling.">Mark sent</button>
           )}
           <button className="ghost" onClick={queueFollowUp} title="Queues the next follow-up draft for this lead, if one is due.">Queue follow-up</button>
         </div>
       </div>
 
       {err && <div className="err" role="alert">{err}</div>}
-      {msg && <div className="ok-msg" role="status">{msg}</div>}
+      {pending && d && (
+        <ConfirmSendDialog
+          draft={d}
+          platform={platform}
+          busy={sending}
+          onConfirm={confirmSend}
+          onClose={() => { if (!sending) setPending(false); }}
+        />
+      )}
 
       {d && (
         <Section
@@ -153,6 +175,28 @@ export default function OutreachDetailPage() {
             Sequence for this pipeline: initial → follow-up 1 → follow-up 2 (max 2), then closed if there is no response.
             Replies are detected via the reply flag — nothing automatic sets it today, so a reply shows here once it is recorded.
           </p>
+        </Section>
+      )}
+
+      {d && parseOutreachNotes(d.notes).length > 0 && (
+        <Section title="Send history" hint="Timestamped snapshots recorded at each stage — what was actually sent, even if the copy was regenerated later.">
+          <ol className="history">
+            {parseOutreachNotes(d.notes).map((h, i) => (
+              <li key={i}>
+                <div className="hist-head">
+                  <strong>{h.title}</strong>
+                  {h.at ? <span className="faint small num">{relTime(h.at)}</span> : null}
+                </div>
+                {h.subject ? <div className="hist-sub">{h.subject}</div> : null}
+                {h.body ? (
+                  <details className="dump-wrap">
+                    <summary>Snapshot body</summary>
+                    <div className="draft-body" style={{ maxHeight: 220 }}>{h.body.slice(0, 1200)}{h.body.length > 1200 ? '…' : ''}</div>
+                  </details>
+                ) : null}
+              </li>
+            ))}
+          </ol>
         </Section>
       )}
 

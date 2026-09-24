@@ -838,7 +838,11 @@ def _primary_issue(report: dict[str, Any]) -> str | None:
 def _business_report_url(slug: str | None, request: Request, base_url: str) -> str | None:
     if not slug:
         return None
-    base = str(request.base_url).rstrip("/")
+    host = (request.base_url.hostname or "").lower()
+    if host in ("localhost", "127.0.0.1", "0.0.0.0"):
+        base = str(request.base_url).rstrip("/")
+    else:
+        base = (base_url or get_settings().base_url or str(request.base_url)).rstrip("/")
     return f"{base}/audit/{slug}"
 
 

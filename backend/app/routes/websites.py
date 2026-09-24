@@ -8,6 +8,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request, status
 
+from app.config import get_settings
 from app.firebase import (
     AUDIT_REPORTS,
     CAMPAIGNS,
@@ -26,7 +27,7 @@ from app.schemas import (
     WebsiteCleanupRequest,
     WebsitePublishRequest,
 )
-from app.services.static_website_generator import eligible_for_static_website
+from app.services.static_website_generator import eligible_for_static_website, websites_root
 from app.services.notion_service import get_notion_sync
 from app.workers.tasks import build_campaign_static_websites, publish_campaign_static_websites
 
@@ -193,8 +194,8 @@ async def cleanup_campaign_website_previews(campaign_id: str, body: WebsiteClean
         if not selected_ids or lead.get("id") in selected_ids
     ]
     from app.services.gmail_service import delete_gmail_draft
+    from app.services.audit_report_artifacts import audit_reports_root
     from app.services.static_website_generator import (
-        audit_reports_root,
         git_commit_and_push_static_paths,
         remove_generated_website_path,
         websites_root,
@@ -379,6 +380,13 @@ async def get_lead_website_preview(lead_id: str, request: Request):
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Lead has no generated website preview yet.",
         )
+    root = websites_root().resolve()
+    preview_dir = (root / slug).resolve()
+    if root not in preview_dir.parents or not (preview_dir / "index.html").is_file():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Preview files for this lead are missing.",
+        )
     return {
         "lead_id": lead_id,
         "status": lead.get("generated_website_status") or "preview",
@@ -410,7 +418,12 @@ def _preview_url(slug: str | None, request: Request) -> str | None:
 
 
 def _base_url(request: Request) -> str:
-    return str(request.base_url).rstrip("/")
+    """Public base URL: the request host in local dev, the configured base_url in production."""
+    host = (request.base_url.hostname or "").lower()
+    if host in ("localhost", "127.0.0.1", "0.0.0.0"):
+        return str(request.base_url).rstrip("/")
+    configured = (get_settings().base_url or "").strip().rstrip("/")
+    return configured or str(request.base_url).rstrip("/")
 
 
 def _generated_preview_cleanup_reason(lead: dict, has_closed_outreach_status: bool = False) -> str | None:

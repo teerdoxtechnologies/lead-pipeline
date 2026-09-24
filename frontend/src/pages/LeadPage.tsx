@@ -188,7 +188,16 @@ export default function LeadPage() {
 
   const canAudit = Boolean(lead?.has_website);
   const canBuild = Boolean(contact?.ready_for_website_build && !gen?.published);
-  const canPublish = Boolean(gen?.slug && !gen?.published);
+  // Existence oracle for the preview files: the slug alone can dangle after
+  // cleanup, so Publish stays gated until the endpoint answers 200.
+  const previewQ = useQuery({
+    queryKey: ['lead-preview', leadId],
+    queryFn: () => api.websitePreview(leadId),
+    enabled: Boolean(gen?.slug),
+    retry: false,
+  });
+  const previewOk = !previewQ.isLoading && !previewQ.isError && Boolean(previewQ.data);
+  const canPublish = Boolean(gen?.slug && !gen?.published) && previewOk;
   const canProcess = Boolean(campaignId && (lead?.has_website || gen?.built));
   const canFollowUp = sentDrafts.length > 0;
 
@@ -380,9 +389,11 @@ export default function LeadPage() {
               </Field>
               <Field label="Preview / live">
               {gen?.url ? <a href={gen.url} target="_blank" rel="noreferrer">open hosted site</a>
-                : gen?.slug ? <a href={site.previewUrl(str(gen.slug))} target="_blank" rel="noreferrer">open preview</a>
-                : <span className="faint">nothing to open yet</span>}
-                {gen?.hosted_at ? <div className="cell-sub">hosted {relTime(gen.hosted_at)}</div> : null}
+                : !gen?.slug ? <span className="faint">nothing to open yet</span>
+                : previewQ.isLoading ? <span className="faint">checking preview files…</span>
+                : previewOk ? <a href={`/preview/${str(gen.slug)}/`} target="_blank" rel="noreferrer">open preview</a>
+                : <span><StatusPill status="preview files missing" tone="warn" /> <span className="faint small">rebuild to inspect it first</span></span>}
+              {gen?.hosted_at ? <div className="cell-sub">hosted {relTime(gen.hosted_at)}</div> : null}
               </Field>
               <Field label="Build readiness">
                 {contact?.ready_for_website_build ? <StatusPill status="ready to build" tone="ok" /> : <StatusPill status="not ready" tone="neutral" />}
@@ -396,15 +407,30 @@ export default function LeadPage() {
               <button className="ghost" onClick={() => buildMut.mutate()} disabled={!canBuild || buildMut.isPending} title={canBuild ? 'Generates a preview website for this lead.' : 'Needs an email address and the needs-website flag, and must not already be hosted.'}>
                 {buildMut.isPending ? 'Building…' : 'Build preview'}
               </button>
-              <button className="ghost" onClick={() => publishMut.mutate()} disabled={!canPublish || publishMut.isPending} title={canPublish ? 'Pushes the approved preview live and drafts outreach.' : 'Needs a built preview that is not hosted yet.'}>
+              <button
+                className="ghost"
+                onClick={() => publishMut.mutate()}
+                disabled={!canPublish || publishMut.isPending}
+                title={
+                  gen?.published ? 'Site is already hosted.'
+                  : !gen?.slug ? 'Build a preview first — nothing goes public uninspected.'
+                  : previewQ.isLoading ? 'Checking preview files…'
+                  : !previewOk ? 'Preview files are missing. Rebuild first — nothing goes public uninspected.'
+                  : 'Pushes the approved preview live and drafts outreach.'
+                }
+              >
                 {publishMut.isPending ? 'Publishing…' : 'Publish site'}
               </button>
               <span className="why">
                 {gen?.published
                   ? 'Site is hosted — nothing left to build or publish.'
-                  : canBuild
-                    ? 'Eligible: email on file and marked for a build.'
-                    : (contact?.manual_action ?? 'Not eligible yet — see readiness above.')}
+                  : !gen?.slug
+                    ? 'No preview yet — build one first.'
+                    : previewQ.isLoading
+                      ? 'Checking preview files…'
+                      : !previewOk
+                        ? 'Preview files missing — rebuild to inspect it first.'
+                        : 'Preview verified — publishing pushes it live and drafts outreach.'}
               </span>
             </div>
           </>

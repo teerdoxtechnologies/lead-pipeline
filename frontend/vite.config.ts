@@ -22,6 +22,12 @@ export default defineConfig({
         target: 'http://127.0.0.1:8000',
         changeOrigin: true,
       },
+      // Unpushed generated-site previews are served by the API itself;
+      // keep them same-origin so relative /preview links resolve in every env.
+      '/preview': {
+        target: 'http://127.0.0.1:8000',
+        changeOrigin: true,
+      },
     },
   },
   preview: {

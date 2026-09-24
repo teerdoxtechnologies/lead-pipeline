@@ -285,9 +285,42 @@ export interface Outreach {
   follow_up_calendar_event_link?: string | null;
   follow_up_calendar_status?: string | null;
   sent_at?: string | null;
+  notes?: string | null;
   notion_page_id?: string | null;
   created_at?: string | null;
   updated_at?: string | null;
+  [k: string]: unknown;
+}
+
+export interface CleanupPreview {
+  campaign_ids?: string[];
+  campaigns?: number;
+  mutable_campaigns?: number;
+  running_or_analyzing_campaigns?: number;
+  leads?: number;
+  audit_reports?: number;
+  no_website_reports?: number;
+  email_drafts?: number;
+  notion_pages?: number;
+  notion_pages_unknown?: boolean;
+  [k: string]: unknown;
+}
+
+export interface WebsiteCleanupResult {
+  campaign_id?: string;
+  dry_run?: boolean;
+  checked?: number;
+  eligible?: number;
+  removed?: number;
+  skipped?: number;
+  failed?: number;
+  removed_outreach?: number;
+  removed_reports?: number;
+  notion_archived?: number;
+  gmail_drafts_deleted?: number;
+  gmail_drafts_failed?: number;
+  static_paths_removed?: number;
+  items?: unknown[];
   [k: string]: unknown;
 }
 

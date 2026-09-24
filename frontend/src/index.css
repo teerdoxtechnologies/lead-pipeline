@@ -593,6 +593,50 @@ pre.dump {
 details.dump-wrap { margin-top: 12px; }
 details.dump-wrap summary { cursor: pointer; font-weight: 600; font-size: 13.5px; color: var(--muted); }
 
+.dialog-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  background: rgba(2, 8, 10, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+.dialog {
+  background: var(--panel);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  max-width: 520px;
+  width: 100%;
+  padding: 22px 24px;
+}
+.dialog p { font-size: 14px; margin: 8px 0; }
+.dialog-subject {
+  font-weight: 700;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+}
+.dialog-note { color: var(--muted); font-size: 13px; }
+
+.checklist { list-style: none; margin: 0 0 4px; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.checklist input[type='checkbox'], .row input[type='radio'] { min-height: 0; width: 16px; height: 16px; accent-color: var(--primary); }
+
+.history { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.history li {
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--primary);
+  border-radius: var(--radius-sm);
+  padding: 10px 14px;
+  background: var(--panel-2);
+}
+.history li .hist-head { display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline; }
+.history li .hist-head strong { font-size: 13.5px; }
+.history li .hist-sub { font-size: 12.5px; color: var(--muted); margin-top: 2px; }
+
 .notfound { text-align: center; padding: 80px 20px; }
 .notfound .code { font-size: 72px; font-weight: 800; letter-spacing: -0.03em; color: var(--primary); }
 .notfound h1 { margin: 8px 0; }

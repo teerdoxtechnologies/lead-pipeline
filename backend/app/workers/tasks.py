@@ -2517,6 +2517,63 @@ def process_campaign_website_leads(
 
 
 @celery_app.task(
+    name="tasks.audit_campaign_websites",
+    bind=True,
+    max_retries=0,
+    soft_time_limit=3600,
+    time_limit=3900,
+)
+def audit_campaign_websites(
+    self,
+    campaign_id: str,
+    lead_ids: Optional[List[str]] = None,
+    manual_verification: bool = False,
+    force: bool = False,
+    request_base_url: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Audit campaign websites in Celery; backs POST /campaigns/{id}/audit-websites."""
+    from types import SimpleNamespace
+
+    from app.routes.audits import _audit_leads, _campaign_leads
+
+    task_id = getattr(getattr(self, "request", None), "id", None)
+    logger.info(
+        "[Website Audit] Task %s started for campaign %s.",
+        task_id,
+        campaign_id,
+    )
+    try:
+        selected = {str(lid).strip() for lid in (lead_ids or []) if str(lid).strip()}
+        leads = _campaign_leads(campaign_id, selected_ids=selected)
+        request = SimpleNamespace(base_url=request_base_url or get_settings().base_url)
+        result = asyncio.run(
+            _audit_leads(
+                campaign_id=campaign_id,
+                request=request,
+                leads=leads,
+                manual_verification=manual_verification,
+                force=force,
+                blocked_only=False,
+            )
+        )
+        logger.info(
+            "[Website Audit] Task %s completed for campaign %s.",
+            task_id,
+            campaign_id,
+        )
+        return result.model_dump(mode="json")
+    except Exception as exc:
+        logger.error(
+            "[Website Audit] Task %s failed for campaign %s: %s",
+            task_id,
+            campaign_id,
+            exc,
+            exc_info=True,
+        )
+        return {"status": "failed", "campaign_id": campaign_id, "error": str(exc)}
+
+
+@celery_app.task(
     name="tasks.repair_campaign_websites",
     bind=True,
     max_retries=0,

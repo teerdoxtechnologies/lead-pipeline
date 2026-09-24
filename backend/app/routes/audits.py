@@ -53,25 +53,39 @@ _MANUAL_VERIFICATION_TIMEOUT_SECONDS = 300
 
 @router.post(
     "/campaigns/{campaign_id}/audit-websites",
-    response_model=CampaignAuditResponse,
-    summary="Audit campaign leads with websites and return per-lead JSON results",
+    response_model=JobResponse,
+    summary="Queue website audits for campaign leads with websites",
+    description=(
+        "Queues a Celery task and returns immediately. Watch the task via "
+        "GET /jobs/{job_id}/status. (audit-blocked-websites stays synchronous: "
+        "it requires visible manual verification, which needs an attended browser.)"
+    ),
 )
 async def audit_campaign_websites(
     campaign_id: str,
     request: Request,
     body: AuditWebsitesRequest | None = None,
 ):
+    from app.workers.tasks import audit_campaign_websites as audit_campaign_websites_task
+
     body = body or AuditWebsitesRequest()
     _require_campaign(campaign_id)
-    leads = _campaign_leads(campaign_id, selected_ids=set(body.lead_ids or []))
-    return await _audit_leads(
-        campaign_id=campaign_id,
-        request=request,
-        leads=leads,
-        manual_verification=body.manual_verification,
-        force=body.force,
-        blocked_only=False,
+    selected_ids = {str(lead_id).strip() for lead_id in body.lead_ids or [] if str(lead_id).strip()}
+    logger.info(
+        "[Website Audit] Queueing campaign %s audit for %d selected lead(s): manual_verification=%s force=%s.",
+        campaign_id,
+        len(selected_ids),
+        body.manual_verification,
+        body.force,
     )
+    task = audit_campaign_websites_task.delay(
+        campaign_id,
+        sorted(selected_ids),
+        body.manual_verification,
+        body.force,
+        str(request.base_url),
+    )
+    return JobResponse(job_id=task.id, status="queued")
 
 
 @router.post(

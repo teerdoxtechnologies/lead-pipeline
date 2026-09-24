@@ -57,6 +57,8 @@ export const api = {
 
   auditWebsites: (campaignId: string, body: { lead_ids?: string[]; force?: boolean; manual_verification?: boolean }) =>
     req<Job>(`/api/campaigns/${campaignId}/audit-websites`, { method: 'POST', body: JSON.stringify(body) }),
+  regenerateReport: (slug: string) =>
+    req<{ report_id: string; slug: string }>(`/api/reports/audit/${slug}/regenerate`, { method: 'POST' }),
   auditBlocked: (campaignId: string) =>
     req<unknown>(`/api/campaigns/${campaignId}/audit-blocked-websites`, { method: 'POST', body: JSON.stringify({}) }),
   processWebsiteLeads: (campaignId: string, leadIds: string[]) =>

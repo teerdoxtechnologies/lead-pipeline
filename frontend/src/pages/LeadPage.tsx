@@ -113,6 +113,14 @@ export default function LeadPage() {
     onSuccess: () => onDone('Audit queued for this lead — a fresh report lands in the audit section.'),
     onError: onErr,
   });
+  const regenReportMut = useMutation({
+    mutationFn: (slug: string) => api.regenerateReport(slug),
+    onSuccess: () => {
+      toast.success('Report regenerated — refreshed scores and findings.');
+      invalidate();
+    },
+    onError: onErr,
+  });
   const buildMut = useMutation({
     mutationFn: () => api.buildWebsites(campaignId, [leadId]),
     onSuccess: onJob, onError: onErr,
@@ -555,6 +563,16 @@ export default function LeadPage() {
               <button className="ghost" onClick={() => auditMut.mutate()} disabled={!canAudit || auditMut.isPending} title={canAudit ? 'Re-audits the live website now and saves a fresh report with new scores.' : 'Only leads with their own website can be audited.'}>
                 {auditMut.isPending ? 'Queuing…' : 'Run audit'}
               </button>
+              {reportSlug ? (
+                <button
+                  className="ghost btn-sm"
+                  onClick={() => regenReportMut.mutate(reportSlug)}
+                  disabled={regenReportMut.isPending}
+                  title="Regenerates this report deterministically without re-scraping."
+                >
+                  {regenReportMut.isPending ? 'Regenerating…' : 'Regenerate report'}
+                </button>
+              ) : null}
               <span className="why">
                 {canAudit
                   ? 'Re-audits the live website now and saves a fresh report with new scores.'

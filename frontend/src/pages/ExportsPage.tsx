@@ -1,6 +1,8 @@
 import { useState } from 'react';
+import { toast } from 'sonner';
 import { useQuery } from '@tanstack/react-query';
 import { api, type ExportStatus } from '../lib/api';
+import { trackJob } from '../lib/jobs';
 import { Field, Fields, Section, StatusPill } from '../components/ui';
 
 export default function ExportsPage() {
@@ -21,6 +23,8 @@ export default function ExportsPage() {
     try {
       const ids = campaignIds.split(',').map((s) => s.trim()).filter(Boolean);
       const r = await api.queueExport(ids.length ? ids : undefined);
+      if (r?.job_id) trackJob(r.job_id, 'Export ZIP');
+      toast.success('Export queued — refresh status, then download the ZIP.');
       setStatus(await api.exportStatus(r.export_id));
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));

@@ -1,4 +1,6 @@
 import { NavLink, Navigate, Route, Routes } from 'react-router-dom';
+import { Toaster } from 'sonner';
+import JobWatcher from './components/JobWatcher';
 import HomePage from './pages/HomePage';
 import CampaignsPage from './pages/CampaignsPage';
 import CampaignDetailPage from './pages/CampaignDetailPage';
@@ -54,6 +56,8 @@ export default function App() {
           <a href="http://127.0.0.1:8000/docs" target="_blank" rel="noreferrer">FastAPI docs</a>
         </div>
       </aside>
+      <Toaster position="bottom-right" theme="system" closeButton />
+      <JobWatcher />
       <main className="main" id="main">
         <Routes>
           <Route path="/" element={<HomePage />} />

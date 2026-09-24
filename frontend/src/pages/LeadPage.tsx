@@ -15,6 +15,10 @@ type Bag = Record<string, unknown>;
 const bag = (v: unknown): Bag => (v && typeof v === 'object' ? (v as Bag) : {});
 const str = (v: unknown): string => (typeof v === 'string' ? v : v == null ? '' : String(v));
 const arr = (v: unknown): unknown[] => (Array.isArray(v) ? v : []);
+const fmtMs = (v: unknown): string => {
+  if (typeof v !== 'number' || Number.isNaN(v)) return '—';
+  return v >= 1000 ? `${(v / 1000).toFixed(1)} s` : `${Math.round(v)} ms`;
+};
 
 export default function LeadPage() {
   const { leadId = '' } = useParams();
@@ -153,8 +157,25 @@ export default function LeadPage() {
   const err = leadQ.error instanceof Error ? leadQ.error.message : leadQ.error ? String(leadQ.error) : '';
   const steps = lead ? leadPipeline({ ...lead }, diag, drafts) : [];
   const report = bag(lead?.audit_report);
-  const noSite = bag(lead?.no_website_report);
   const findings = arr(report.findings);
+  const trust: { label: string; ok: boolean }[] = [];
+  if (typeof report.has_social_proof === 'boolean')
+    trust.push({ label: 'Social proof', ok: report.has_social_proof });
+  if (typeof report.has_clear_cta === 'boolean')
+    trust.push({ label: 'Clear CTA', ok: report.has_clear_cta });
+  if (typeof report.has_clear_value_proposition === 'boolean')
+    trust.push({ label: 'Value proposition', ok: report.has_clear_value_proposition });
+  const bqScore = typeof report.browser_quality_score === 'number' ? report.browser_quality_score : null;
+  const bqSummary = str(report.browser_quality_summary);
+  const bqDevices: { name: string; d: Bag }[] = [];
+  if (report.browser_quality && typeof report.browser_quality === 'object') {
+    const bq = report.browser_quality as Bag;
+    for (const name of ['Desktop', 'Mobile']) {
+      const dev = bq[name.toLowerCase()];
+      if (dev && typeof dev === 'object' && typeof (dev as Bag).score === 'number')
+        bqDevices.push({ name, d: dev as Bag });
+    }
+  }
   const recommendations = arr(report.recommendations);
   const strengths = arr(report.strengths);
   const weaknesses = arr(report.weaknesses);
@@ -305,6 +326,17 @@ export default function LeadPage() {
                 {maps.repair_error ? <div className="cell-sub">{str(maps.repair_error)}</div> : null}
               </Field>
             ) : null}
+            <Field label="Listing media">
+              {(maps?.reviews_saved ?? 0) > 0 || (maps?.listing_images_saved ?? 0) > 0 ? (
+                <span>
+                  <strong className="num">{maps?.reviews_saved ?? 0}</strong> reviews saved ·{' '}
+                  <strong className="num">{maps?.listing_images_saved ?? 0}</strong> images saved{' '}
+                  {maps?.listing_media_status ? <StatusPill status={maps.listing_media_status} tone="neutral" /> : null}
+                </span>
+              ) : (
+                <span className="faint">no saved reviews or images</span>
+              )}
+            </Field>
             {(lead.team_members?.length ?? 0) > 0 ? (
               <Field label="Team notes">
                 <span>{lead.team_members!.join(' · ')}</span>
@@ -395,7 +427,63 @@ export default function LeadPage() {
               <Meter label="UX" value={Number(report.ux_score)} />
               <Meter label="SEO" value={Number(report.seo_score)} />
               <Meter label="Copy" value={Number(report.copy_score)} />
+              {bqScore !== null ? <Meter label="Browser quality" value={bqScore} /> : null}
             </div>
+            {trust.length > 0 && (
+              <div className="row tight" style={{ marginBottom: 12 }} role="group" aria-label="Trust signals">
+                {trust.map((t) => (
+                  <StatusPill key={t.label} status={`${t.label}: ${t.ok ? 'present' : 'missing'}`} tone={t.ok ? 'ok' : 'warn'} />
+                ))}
+              </div>
+            )}
+            {(bqDevices.length > 0 || bqSummary) && (
+              <>
+                <h3 style={{ margin: '12px 0 8px' }}>Browser quality</h3>
+                {bqDevices.map(({ name, d }) => {
+                  const v = (k: string) => d[k];
+                  const numText = (k: string) =>
+                    typeof v(k) === 'number' ? (v(k) as number).toLocaleString() : '—';
+                  const issues = arr(d.issues).map(str).filter(Boolean).slice(0, 6);
+                  return (
+                    <div key={name} style={{ marginBottom: 14 }}>
+                      <Meter label={`${name} score`} value={typeof v('score') === 'number' ? (v('score') as number) : null} />
+                      <Fields>
+                        <Field label="Largest paint"><strong className="num">{fmtMs(v('lcp_ms'))}</strong></Field>
+                        <Field label="First paint"><strong className="num">{fmtMs(v('fcp_ms'))}</strong></Field>
+                        <Field label="Layout shift"><strong className="num">{typeof v('cls') === 'number' ? String(v('cls')) : '—'}</strong></Field>
+                        <Field label="CTAs above fold"><strong className="num">{numText('above_fold_cta_count')}</strong></Field>
+                        <Field label="Low-contrast texts"><strong className="num">{numText('low_contrast_text_count')}</strong></Field>
+                        <Field label="Small tap targets"><strong className="num">{numText('small_tap_target_count')}</strong></Field>
+                        <Field label="Visible H1">
+                          {v('has_visible_h1') === true ? (
+                            <StatusPill status="H1 present" tone="ok" />
+                          ) : v('has_visible_h1') === false ? (
+                            <StatusPill status="no H1" tone="warn" />
+                          ) : (
+                            <span className="faint">—</span>
+                          )}
+                        </Field>
+                        <Field label="Overflow">
+                          {v('horizontal_overflow') === true ? (
+                            <StatusPill status="overflows" tone="warn" />
+                          ) : v('horizontal_overflow') === false ? (
+                            <StatusPill status="fits viewport" tone="ok" />
+                          ) : (
+                            <span className="faint">—</span>
+                          )}
+                        </Field>
+                      </Fields>
+                      {issues.length > 0 && (
+                        <ul className="reclist">{issues.map((m, i) => <li key={i}>{m}</li>)}</ul>
+                      )}
+                    </div>
+                  );
+                })}
+                {bqDevices.length === 0 && bqSummary ? (
+                  <div className="draft-body" style={{ maxHeight: 180 }}>{bqSummary}</div>
+                ) : null}
+              </>
+            )}
             {findings.length > 0 && (
               <>
                 <h3 style={{ margin: '12px 0 8px' }}>Findings ({findings.length})</h3>
@@ -430,6 +518,13 @@ export default function LeadPage() {
                 {weaknesses.length > 0 ? <Field label="Weaknesses"><span>{weaknesses.map(str).join(' · ')}</span></Field> : null}
               </Fields>
             )}
+            <Fields>
+              {str(report.appraisal_method) ? <Field label="Appraisal"><span>{str(report.appraisal_method)}</span></Field> : null}
+              {str(report.created_at) && str(report.created_at) !== str(report.updated_at) ? (
+                <Field label="Reported"><strong>{fmtDate(str(report.created_at))}</strong></Field>
+              ) : null}
+              {str(report.notion_page_id) ? <Field label="Report Notion"><span className="mono small">{str(report.notion_page_id)}</span></Field> : null}
+            </Fields>
             <div className="action-row">
               <button className="ghost" onClick={() => auditMut.mutate()} disabled={!canAudit || auditMut.isPending} title={canAudit ? 'Re-audits the live website now and saves a fresh report with new scores.' : 'Only leads with their own website can be audited.'}>
                 {auditMut.isPending ? 'Queuing…' : 'Run audit'}
@@ -442,15 +537,77 @@ export default function LeadPage() {
             </div>
           </>
         )}
-        {!lead?.audit_report && lead?.no_website_report && (
-          <>
-            <p className="small muted">No-site report saved{str(noSite.report_url) ? <> — <a href={str(noSite.report_url)} target="_blank" rel="noreferrer">open report</a></> : '.'}</p>
-            <details className="dump-wrap">
-              <summary>Report payload</summary>
-              <pre className="dump">{JSON.stringify(lead.no_website_report, null, 2)}</pre>
-            </details>
-          </>
-        )}
+        {!lead?.audit_report && lead?.no_website_report && (() => {
+          const r = bag(lead.no_website_report);
+          const comps = arr(r.competitors);
+          const missed = arr(r.missed_opportunities).map(str).filter(Boolean);
+          const recs = arr(r.recommendations).map(str).filter(Boolean);
+          return (
+            <>
+              {str(r.potential_revenue_impact) ? (
+                <p className="small" style={{ marginBottom: 12 }}>
+                  <strong>Revenue at stake:</strong> {str(r.potential_revenue_impact)}
+                </p>
+              ) : null}
+              {comps.length > 0 && (
+                <>
+                  <h3 style={{ margin: '12px 0 8px' }}>Competitors winning online ({comps.length})</h3>
+                  <div className="table-wrap">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th scope="col">Competitor</th>
+                          <th scope="col">Presence</th>
+                          <th scope="col">Why they win</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {comps.map((c, i) => {
+                          const cb = bag(c);
+                          return (
+                            <tr key={i}>
+                              <td>
+                                <div className="cell-title">
+                                  {str(cb.website) ? (
+                                    <a href={str(cb.website)} target="_blank" rel="noreferrer">{str(cb.name) || 'Competitor'}</a>
+                                  ) : (
+                                    str(cb.name) || 'Competitor'
+                                  )}
+                                </div>
+                              </td>
+                              <td className="num"><b>{typeof cb.estimated_online_presence_score === 'number' ? `${cb.estimated_online_presence_score}/10` : '—'}</b></td>
+                              <td className="small muted">{str(cb.why_they_win_online)}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </>
+              )}
+              {missed.length > 0 && (
+                <>
+                  <h3 style={{ margin: '12px 0 8px' }}>Missed opportunities</h3>
+                  <ul className="reclist">{missed.map((m, i) => <li key={i}>{m}</li>)}</ul>
+                </>
+              )}
+              {recs.length > 0 && (
+                <>
+                  <h3 style={{ margin: '12px 0 8px' }}>Recommended fixes</h3>
+                  <ul className="reclist">{recs.map((m, i) => <li key={i}>{m}</li>)}</ul>
+                </>
+              )}
+              {!comps.length && !missed.length && !recs.length && !str(r.potential_revenue_impact) ? (
+                <EmptyState title="Report saved, no detail parsed" body="The payload below is all the API returned." />
+              ) : null}
+              {str(r.slug) ? <p className="small faint">report <span className="mono">{str(r.slug)}</span></p> : null}
+              <details className="dump-wrap">
+                <summary>Report payload</summary>
+                <pre className="dump">{JSON.stringify(lead.no_website_report, null, 2)}</pre>
+              </details>
+            </>
+          );
+        })()}
       </Section>
 
       <Section

@@ -31,13 +31,27 @@ export default function LeadPage() {
     queryKey: ['drafts-lead', leadId],
     queryFn: () => api.drafts({ lead_id: leadId, limit: 50 }),
   });
-  const campaignsQ = useQuery({ queryKey: ['campaigns', ''], queryFn: () => api.listCampaigns() });
 
   const lead = leadQ.data;
   const diag = diagQ.data ?? null;
   const drafts = draftsQ.data ?? [];
   const campaignId = str(lead?.campaign_id || diag?.campaign_id);
-  const campaignName = campaignsQ.data?.find((c) => c.id === campaignId)?.name;
+  // Shared cache with the other pages; polls only while this campaign is
+  // actively running so idle leads stay fetch-once.
+  const campaignsQ = useQuery({
+    queryKey: ['campaigns', ''],
+    queryFn: () => api.listCampaigns(),
+    refetchInterval: (q) => {
+      const c = (q.state.data as { id: string; status: string }[] | undefined)?.find(
+        (x) => x.id === campaignId,
+      );
+      return c?.status === 'running' || c?.status === 'analyzing' ? 10_000 : false;
+    },
+    enabled: Boolean(campaignId),
+  });
+  const campaign = campaignsQ.data?.find((c) => c.id === campaignId);
+  const campaignName = campaign?.name;
+  const showRunning = campaign?.status === 'running' || campaign?.status === 'analyzing';
   const primary = outreachFor(drafts);
   const sent = isSent(drafts, lead ?? null);
   const sentDrafts = drafts.filter((d) => ['sent', 'closed', 'converted'].includes(str(d.status)));
@@ -158,6 +172,12 @@ export default function LeadPage() {
                 <span className="faint">no site yet</span>
               )}
               <span>updated <strong>{relTime(lead.updated_at)}</strong></span>
+              {showRunning && campaignId ? (
+                <span>
+                  <StatusPill status="pipeline running" tone="violet live" />{' '}
+                  <Link to={`/campaigns/${campaignId}`}>view progress</Link>
+                </span>
+              ) : null}
             </div>
           )}
         </div>

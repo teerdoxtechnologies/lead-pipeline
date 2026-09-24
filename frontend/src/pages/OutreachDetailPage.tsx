@@ -11,6 +11,7 @@ import { Breadcrumbs, EmptyState, Field, Fields, Section, StatusPill, Steps, typ
 
 const SENT = new Set(['sent', 'closed', 'converted']);
 
+const str = (v: unknown): string => (typeof v === 'string' ? v : v == null ? '' : String(v));
 
 function isReplied(replyStatus?: string | null): boolean {
   const r = String(replyStatus ?? '');
@@ -24,9 +25,26 @@ export default function OutreachDetailPage() {
   const [pending, setPending] = useState(false);
   const [sending, setSending] = useState(false);
   const [now] = useState(() => Date.now());
-
   const draftQ = useQuery({ queryKey: ['draft', draftId], queryFn: () => api.draft(draftId) });
   const d = draftQ.data;
+  const threadCampaignId = str(d?.campaign_id ?? '');
+
+  // Shared cache with the other pages; polls only while this campaign is
+  // actively running so idle threads stay fetch-once.
+  const campaignsQ = useQuery({
+    queryKey: ['campaigns', ''],
+    queryFn: () => api.listCampaigns(),
+    refetchInterval: (q) => {
+      const c = (q.state.data as { id: string; status: string }[] | undefined)?.find(
+        (x) => x.id === threadCampaignId,
+      );
+      return c?.status === 'running' || c?.status === 'analyzing' ? 10_000 : false;
+    },
+    enabled: Boolean(threadCampaignId),
+  });
+  const threadCampaign = campaignsQ.data?.find((c) => c.id === threadCampaignId);
+  const showRunning =
+    threadCampaign?.status === 'running' || threadCampaign?.status === 'analyzing';
 
   const leadQ = useQuery({
     queryKey: ['lead', d?.lead_id ?? ''],
@@ -138,6 +156,12 @@ export default function OutreachDetailPage() {
                 <StatusPill status="awaiting reply" tone="neutral" />
               ) : null}
               {overdue ? <StatusPill status="follow-up overdue" tone="warn" /> : null}
+              {showRunning && threadCampaignId ? (
+                <span>
+                  <StatusPill status="pipeline running" tone="violet live" />{' '}
+                  <Link to={`/campaigns/${threadCampaignId}`}>view progress</Link>
+                </span>
+              ) : null}
               <span>updated <strong>{relTime(d.follow_up_due_at ?? d.created_at)}</strong></span>
             </div>
           )}

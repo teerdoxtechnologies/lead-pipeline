@@ -172,6 +172,36 @@ def query_collection(
         item = doc.to_dict()
         item["id"] = doc.id
         results.append(item)
+    return results
+
+
+def count_collection(
+    collection: str,
+    filters: Optional[List[Tuple[str, str, Any]]] = None,
+) -> int:
+    """
+    COUNT aggregation: one round-trip, no document reads. Same filter
+    tuples as :func:`query_collection`. Use for totals; fetch documents
+    only when their contents are actually needed.
+    """
+    db = get_db()
+    query: BaseQuery = db.collection(collection)
+    if filters:
+        for field, op, value in filters:
+            query = query.where(filter=FieldFilter(field, op, value))
+    total = 0
+    for result in query.count(alias="total").get():
+        value = getattr(result, "value", None)
+        if value is None:
+            try:
+                value = result[0].value
+            except Exception:
+                value = 0
+        try:
+            total += int(value or 0)
+        except (TypeError, ValueError):
+            continue
+    return total
 
     return results
 

@@ -1,7 +1,9 @@
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { toast } from 'sonner';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { api, type Campaign, type Outreach } from '../lib/api';
+import { api, type Campaign, type CleanupPreview, type Outreach } from '../lib/api';
+import { trackJob } from '../lib/jobs';
 import { num, relTime } from '../lib/format';
 import { EmptyState, Section, SkeletonRows, StatCard, StatusPill } from '../components/ui';
 
@@ -11,6 +13,13 @@ const NO_DRAFTS: Outreach[] = [];
 export default function CampaignsPage() {
   const [status, setStatus] = useState('');
   const [form, setForm] = useState({ name: '', niche: '', location: '' });
+  const [sel, setSel] = useState<string[]>([]);
+  const [scopeAll, setScopeAll] = useState(false);
+  const [preview, setPreview] = useState<CleanupPreview | null>(null);
+  const [confirmText, setConfirmText] = useState('');
+  const [previewBusy, setPreviewBusy] = useState(false);
+  const [delBusy, setDelBusy] = useState(false);
+  const [delErr, setDelErr] = useState('');
   const qc = useQueryClient();
 
   const list = useQuery({
@@ -51,8 +60,9 @@ export default function CampaignsPage() {
 
   const createMut = useMutation({
     mutationFn: (body: { name: string; niche: string; location: string }) => api.createCampaign(body),
-    onSuccess: () => {
+    onSuccess: (c) => {
       setForm({ name: '', niche: '', location: '' });
+      toast.success(`Campaign “${c.name}” created — scrape started.`);
       qc.invalidateQueries({ queryKey: ['campaigns'] });
     },
   });
@@ -67,6 +77,54 @@ export default function CampaignsPage() {
   const errMsg =
     (list.error instanceof Error ? list.error.message : list.error ? String(list.error) : '') ||
     (createMut.error instanceof Error ? createMut.error.message : '');
+
+  function toggleSel(id: string) {
+    setSel((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id]));
+    setPreview(null);
+    setConfirmText('');
+  }
+
+  async function loadPreview() {
+    setDelErr('');
+    setPreview(null);
+    setConfirmText('');
+    setPreviewBusy(true);
+    try {
+      setPreview(await api.cleanupPreview(scopeAll ? undefined : sel));
+    } catch (e) {
+      setDelErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setPreviewBusy(false);
+    }
+  }
+
+  const blockedRunning = (preview?.running_or_analyzing_campaigns ?? 0) > 0;
+  const canDelete =
+    preview !== null &&
+    !blockedRunning &&
+    (scopeAll || sel.length > 0) &&
+    confirmText === 'DELETE_CAMPAIGNS' &&
+    !delBusy;
+
+  async function runDelete() {
+    if (!canDelete) return;
+    setDelBusy(true);
+    setDelErr('');
+    try {
+      const job = await api.deleteCampaigns(scopeAll ? 'all' : 'selected', scopeAll ? undefined : sel);
+      const n = scopeAll ? (preview?.campaigns ?? 0) : sel.length;
+      if (job?.job_id) trackJob(job.job_id, `Delete ${n} campaign${n === 1 ? '' : 's'}`);
+      toast.success('Delete queued — campaigns disappear as the job finishes.');
+      setSel([]);
+      setPreview(null);
+      setConfirmText('');
+      qc.invalidateQueries({ queryKey: ['campaigns'] });
+    } catch (e) {
+      setDelErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setDelBusy(false);
+    }
+  }
 
   return (
     <div>
@@ -193,6 +251,91 @@ export default function CampaignsPage() {
             </tbody>
           </table>
         </div>
+      </Section>
+
+      <Section
+        title="Delete campaigns"
+        hint="Permanent: campaigns, leads, reports, drafts, Gmail drafts (if configured) and Notion links. Preview first, then type DELETE_CAMPAIGNS to confirm."
+      >
+        <div className="row" role="group" aria-label="Delete scope" style={{ marginBottom: 12 }}>
+          <label className="row tight small">
+            <input
+              type="radio"
+              name="del-scope"
+              checked={!scopeAll}
+              onChange={() => { setScopeAll(false); setPreview(null); setConfirmText(''); }}
+            />
+            Selected campaigns
+          </label>
+          <label className="row tight small">
+            <input
+              type="radio"
+              name="del-scope"
+              checked={scopeAll}
+              onChange={() => { setScopeAll(true); setPreview(null); setConfirmText(''); }}
+            />
+            All campaigns
+          </label>
+        </div>
+        {!scopeAll && (
+          <ul className="checklist">
+            {items.map((c) => (
+              <li key={String(c.id)}>
+                <label className="row tight small">
+                  <input type="checkbox" checked={sel.includes(c.id)} onChange={() => toggleSel(c.id)} />
+                  <strong>{String(c.name)}</strong>
+                  <StatusPill status={c.status} />
+                </label>
+              </li>
+            ))}
+            {!list.isLoading && !items.length && <li className="faint small">No campaigns to select.</li>}
+          </ul>
+        )}
+        <div className="action-row" style={{ borderTop: 'none', paddingTop: 0, marginTop: 12 }}>
+          <button
+            className="ghost"
+            onClick={loadPreview}
+            disabled={(!scopeAll && sel.length === 0) || list.isLoading || previewBusy}
+          >
+            {previewBusy ? 'Scanning records…' : 'Preview deletion'}
+          </button>
+          {delErr ? <span className="why" role="alert">{delErr}</span> : null}
+        </div>
+        {preview && (
+          <>
+            <div className="stat-grid" role="group" aria-label="Deletion preview" style={{ marginTop: 12 }}>
+              <StatCard label="Campaigns" value={num(preview.campaigns)} hint={`${num(preview.mutable_campaigns)} deletable`} />
+              <StatCard label="Leads" value={num(preview.leads)} hint="will be removed" tone={preview.leads ? 'danger' : undefined} />
+              <StatCard label="Reports" value={num((preview.audit_reports ?? 0) + (preview.no_website_reports ?? 0))} hint="audit + no-site" tone={(preview.audit_reports ?? 0) + (preview.no_website_reports ?? 0) ? 'danger' : undefined} />
+              <StatCard label="Drafts" value={num(preview.email_drafts)} hint="outreach records" tone={preview.email_drafts ? 'danger' : undefined} />
+              <StatCard
+                label="Notion pages"
+                value={preview.notion_pages_unknown ? '—' : num(preview.notion_pages)}
+                hint={preview.notion_pages_unknown ? 'needs Firestore index' : 'archived, not deleted'}
+              />
+            </div>
+            {blockedRunning ? (
+              <div className="err" role="alert" style={{ marginTop: 12 }}>
+                {num(preview.running_or_analyzing_campaigns)} campaign(s) still running or analyzing.
+                Stop them first — deletion is blocked while work is in flight.
+              </div>
+            ) : (
+              <div className="row" style={{ marginTop: 12 }}>
+                <input
+                  aria-label="Type DELETE_CAMPAIGNS to confirm"
+                  placeholder="Type DELETE_CAMPAIGNS to confirm"
+                  value={confirmText}
+                  onChange={(e) => setConfirmText(e.target.value)}
+                  style={{ minWidth: 300 }}
+                  autoComplete="off"
+                />
+                <button className="danger" onClick={runDelete} disabled={!canDelete}>
+                  {delBusy ? 'Queuing…' : `Delete ${scopeAll ? num(preview.campaigns) : sel.length} campaign${(scopeAll ? preview.campaigns : sel.length) === 1 ? '' : 's'}`}
+                </button>
+              </div>
+            )}
+          </>
+        )}
       </Section>
     </div>
   );

@@ -1,7 +1,9 @@
 import { useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
+import { toast } from 'sonner';
+import { trackJob } from '../lib/jobs';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { api, type Lead, type Outreach } from '../lib/api';
+import { api, type Lead, type Outreach, type WebsiteCleanupResult } from '../lib/api';
 import { fmtDate, isActiveJob, num, relTime } from '../lib/format';
 import { leadStageSummary } from '../lib/leadStage';
 import {
@@ -33,6 +35,9 @@ export default function CampaignDetailPage() {
   const [emailFilter, setEmailFilter] = useState(''); // '' | 'yes' | 'no'
   const [outreachFilter, setOutreachFilter] = useState(''); // '' | 'none' | 'drafted' | 'sent'
   const [now] = useState(() => Date.now());
+  const [cleanResult, setCleanResult] = useState<WebsiteCleanupResult | null>(null);
+  const [cleanBusy, setCleanBusy] = useState(false);
+  const [cleanErr, setCleanErr] = useState('');
 
   const listQ = useQuery({
     queryKey: ['campaigns', ''],
@@ -87,17 +92,21 @@ export default function CampaignDetailPage() {
     qc.invalidateQueries({ queryKey: ['website-candidates', id] });
   };
 
-  const onJob = (data: { job_id?: string }) => {
-    if (data?.job_id) setLastJobId(data.job_id);
+  const onJob = (data: { job_id?: string }, action: string) => {
+    if (data?.job_id) {
+      setLastJobId(data.job_id);
+      trackJob(data.job_id, `${action} · ${campaign?.name ?? id}`);
+    }
+    toast.success('Job queued — see Jobs below for live state.');
     invalidate();
   };
 
-  const fullMut = useMutation({ mutationFn: () => api.runFull(id), onSuccess: onJob });
-  const scrapeMut = useMutation({ mutationFn: () => api.scrape(id), onSuccess: onJob });
-  const resumeMut = useMutation({ mutationFn: () => api.resume(id), onSuccess: onJob });
+  const fullMut = useMutation({ mutationFn: () => api.runFull(id), onSuccess: (d) => onJob(d, 'Run full') });
+  const scrapeMut = useMutation({ mutationFn: () => api.scrape(id), onSuccess: (d) => onJob(d, 'Maps scrape') });
+  const resumeMut = useMutation({ mutationFn: () => api.resume(id), onSuccess: (d) => onJob(d, 'Resume analysis') });
   const cancelMut = useMutation({ mutationFn: () => api.cancel(id), onSuccess: invalidate });
-  const auditMut = useMutation({ mutationFn: () => api.auditWebsites(id, {}), onSuccess: invalidate });
-  const regenMut = useMutation({ mutationFn: () => api.regenerateDrafts(id), onSuccess: onJob });
+  const auditMut = useMutation({ mutationFn: () => api.auditWebsites(id, {}), onSuccess: (d) => onJob(d, 'Run audits') });
+  const regenMut = useMutation({ mutationFn: () => api.regenerateDrafts(id), onSuccess: (d) => onJob(d, 'Regenerate drafts') });
 
   const queueBusy = fullMut.isPending || scrapeMut.isPending || resumeMut.isPending || cancelMut.isPending;
 
@@ -144,6 +153,25 @@ export default function CampaignDetailPage() {
   const nextSteps = candidatesQ.data?.next_steps;
   const nextStepsText = Array.isArray(nextSteps) ? nextSteps.join(' ') : (nextSteps ?? '');
 
+  async function runCleanup(dryRun: boolean) {
+    setCleanBusy(true);
+    setCleanErr('');
+    try {
+      const r = await api.cleanupWebsites(id, { dry_run: dryRun });
+      setCleanResult(r);
+      if (!dryRun) {
+        toast.success(
+          `Cleanup done — ${num(r.removed)} removed, ${num(r.failed)} failed.`,
+        );
+        invalidate();
+      }
+    } catch (e) {
+      setCleanErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setCleanBusy(false);
+    }
+  }
+
   return (
     <div>
       <div className="page-head">
@@ -169,8 +197,8 @@ export default function CampaignDetailPage() {
           <button className="ghost" onClick={() => resumeMut.mutate()} disabled={queueBusy || isRunning} title="Continues a paused or interrupted analysis run where it stopped.">
             Resume analysis
           </button>
-          <button className="ghost" onClick={() => auditMut.mutate()} disabled={auditMut.isPending || queueBusy} title="Audits the websites of leads that have one and saves fresh reports.">
-            {auditMut.isPending ? 'Auditing…' : 'Run audits'}
+          <button className="ghost" onClick={() => auditMut.mutate()} disabled={auditMut.isPending || queueBusy} title="Queues website audits for leads that have one. Watch progress in Jobs below.">
+            Run audits
           </button>
           <button className="ghost" onClick={() => regenMut.mutate()} disabled={regenMut.isPending || queueBusy} title="Rewrites existing outreach copy from the latest templates. Never changes outreach status.">
             {regenMut.isPending ? 'Queued…' : 'Regenerate drafts'}
@@ -373,6 +401,43 @@ export default function CampaignDetailPage() {
               <StatCard label="Hosted" value={num(wc?.hosted ?? candidatesQ.data.hosted)} tone="ok" />
             </div>
             {nextStepsText ? <p className="small muted">{nextStepsText}</p> : null}
+            <div className="action-row">
+              <button className="ghost btn-sm" onClick={() => runCleanup(true)} disabled={cleanBusy}>
+                {cleanBusy ? 'Working…' : 'Preview cleanup'}
+              </button>
+              <span className="why">Dry run first: lists closed leads and stale artifacts without deleting anything.</span>
+            </div>
+            {cleanErr ? <div className="err" role="alert" style={{ marginTop: 12 }}>{cleanErr}</div> : null}
+            {cleanResult && (
+              <>
+                <div className="stat-grid" role="group" aria-label="Cleanup result" style={{ marginTop: 12 }}>
+                  <StatCard label="Checked" value={num(cleanResult.checked)} hint="leads scanned" />
+                  <StatCard
+                    label={cleanResult.dry_run ? 'Would remove' : 'Removed'}
+                    value={num(cleanResult.dry_run ? cleanResult.eligible : cleanResult.removed)}
+                    hint="closed leads + artifacts"
+                    tone={(cleanResult.dry_run ? cleanResult.eligible : cleanResult.removed) ? 'warn' : undefined}
+                  />
+                  <StatCard label="Skipped" value={num(cleanResult.skipped)} hint="not eligible" />
+                  <StatCard label="Failed" value={num(cleanResult.failed)} hint="needs attention" tone={cleanResult.failed ? 'danger' : undefined} />
+                </div>
+                {(cleanResult.gmail_drafts_deleted ?? 0) > 0 || (cleanResult.static_paths_removed ?? 0) > 0 || (cleanResult.notion_archived ?? 0) > 0 ? (
+                  <p className="small muted" style={{ marginTop: 8 }}>
+                    Gmail drafts deleted: <strong className="num">{num(cleanResult.gmail_drafts_deleted)}</strong>
+                    {' · '}static paths removed: <strong className="num">{num(cleanResult.static_paths_removed)}</strong>
+                    {' · '}Notion archived: <strong className="num">{num(cleanResult.notion_archived)}</strong>
+                  </p>
+                ) : null}
+                {cleanResult.dry_run && (cleanResult.eligible ?? 0) > 0 ? (
+                  <div className="action-row">
+                    <button className="danger btn-sm" onClick={() => runCleanup(false)} disabled={cleanBusy}>
+                      Delete {num(cleanResult.eligible)} flagged items
+                    </button>
+                    <span className="why">Removes leads, outreach, reports, Gmail drafts and static files. Cannot be undone.</span>
+                  </div>
+                ) : null}
+              </>
+            )}
           </>
         ) : candidatesQ.isLoading ? (
           <p className="muted small">Loading website pipeline…</p>

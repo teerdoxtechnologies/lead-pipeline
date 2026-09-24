@@ -1201,7 +1201,23 @@ def _ensure_delete_confirmed(confirm: str) -> None:
         )
 
 
+def _chunked(values: list[str], size: int = 10) -> list[list[str]]:
+    return [values[i:i + size] for i in range(0, len(values), size)]
+
+
+def _count_in(collection: str, field: str, values: list[str]) -> int:
+    """COUNT aggregation over IN-chunks (IN accepts at most 10 values)."""
+    from app.firebase import count_collection
+
+    total = 0
+    for chunk in _chunked(values):
+        total += count_collection(collection, [(field, "in", chunk)])
+    return total
+
+
 def _campaign_cleanup_preview(campaign_ids: list[str]) -> CampaignCleanupPreviewResponse:
+    from app.firebase import count_collection
+
     response = CampaignCleanupPreviewResponse(campaign_ids=campaign_ids)
     for campaign_id in campaign_ids:
         campaign = get_document(CAMPAIGNS, campaign_id)
@@ -1218,21 +1234,25 @@ def _campaign_cleanup_preview(campaign_ids: list[str]) -> CampaignCleanupPreview
         if campaign.get("search_evidence_notion_page_id"):
             response.notion_pages += 1
 
+        # Totals via COUNT aggregation (single-field filters need no extra indexes).
+        # Notion linkage is counted from fetched documents instead: the
+        # (lead_id + notion_page_id) conjunction would need composite indexes
+        # that the console refuses to create, and these batches are small.
         lead_docs = _query_all(LEADS, filters=[("campaign_id", "==", campaign_id)])
         response.leads += len(lead_docs)
+        lead_ids = [lead["id"] for lead in lead_docs]
         response.notion_pages += sum(1 for lead in lead_docs if lead.get("notion_page_id"))
 
-        for lead in lead_docs:
-            lead_id = lead["id"]
-            audit_docs = _query_all(AUDIT_REPORTS, filters=[("lead_id", "==", lead_id)])
-            no_website_docs = _query_all(NO_WEBSITE_REPORTS, filters=[("lead_id", "==", lead_id)])
-            draft_docs = _query_all(EMAIL_DRAFTS, filters=[("lead_id", "==", lead_id)])
-            response.audit_reports += len(audit_docs)
-            response.no_website_reports += len(no_website_docs)
-            response.email_drafts += len(draft_docs)
-            response.notion_pages += sum(1 for doc in audit_docs if doc.get("notion_page_id"))
-            response.notion_pages += sum(1 for doc in no_website_docs if doc.get("notion_page_id"))
-            response.notion_pages += sum(1 for doc in draft_docs if doc.get("notion_page_id"))
+        response.audit_reports += _count_in(AUDIT_REPORTS, "lead_id", lead_ids)
+        response.no_website_reports += _count_in(NO_WEBSITE_REPORTS, "lead_id", lead_ids)
+        response.email_drafts += count_collection(EMAIL_DRAFTS, [("campaign_id", "==", campaign_id)])
+
+        draft_docs = _query_all(EMAIL_DRAFTS, filters=[("campaign_id", "==", campaign_id)])
+        response.notion_pages += sum(1 for doc in draft_docs if doc.get("notion_page_id"))
+        for collection in (AUDIT_REPORTS, NO_WEBSITE_REPORTS):
+            for chunk in _chunked(lead_ids):
+                docs = _query_all(collection, filters=[("lead_id", "in", chunk)])
+                response.notion_pages += sum(1 for doc in docs if doc.get("notion_page_id"))
     return response
 
 

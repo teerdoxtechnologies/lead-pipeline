@@ -525,6 +525,8 @@ class EmailDraftResponse(BaseModel):
     follow_up_calendar_event_id: Optional[str] = None
     follow_up_calendar_event_link: Optional[str] = None
     follow_up_calendar_status: Optional[str] = None
+    sent_at: Optional[Any] = None
+    notes: Optional[str] = None
     created_at: Optional[Any] = None
 
 

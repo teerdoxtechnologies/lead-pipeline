@@ -200,6 +200,8 @@ def _serialise_draft(doc: dict) -> EmailDraftResponse:
         follow_up_calendar_event_id=doc.get("follow_up_calendar_event_id"),
         follow_up_calendar_event_link=doc.get("follow_up_calendar_event_link"),
         follow_up_calendar_status=doc.get("follow_up_calendar_status"),
+        sent_at=doc.get("sent_at"),
+        notes=doc.get("notes"),
         created_at=doc.get("created_at"),
     )
 

@@ -2165,6 +2165,11 @@ o_website follow-ups now use the new preview-specific subject/body pair for oll
 - Standing user rule (handoff): ALWAYS update this file as part of the SAME
   commit as the code it describes. Never commit code and its handoff notes
   separately - the notes must travel with the change.
+- Standing user rule (UI copy): do NOT add explanatory text to UI elements
+  when the action is self-evident. No hint sentences on button bars,
+  no "N is permanent" restatements when a confirmation dialog already says
+  it. The user called this out on the campaigns bulk-delete bar. Labels and
+  counts only.
 
 
 2026-09-23..25 frontend work (the whole batch is committed through 827539f):
@@ -2224,6 +2229,31 @@ o_website follow-ups now use the new preview-specific subject/body pair for oll
   of index.css (transition-duration 0.001s).
 - The top bar never collapses below 900px: toggle hidden, .sidebar-rule
   hidden, expanded rules forced even if .collapsed is set.
+- Campaign deletion is integrated into the campaigns list (user asked for
+  this; the old standalone "Delete campaigns" Section is GONE):
+  * Leading .col-check checkbox column in the "All campaigns" table plus a
+    header checkbox = select all LISTED rows (respects the status filter).
+  * A .bulk-bar strip sits in a FIXED slot right below the section header,
+    always rendered (user rejected the appear/disappear jump). Idle state
+    (.bulk-bar.idle, muted panel background) shows "0 selected" with Clear +
+    Delete disabled; selecting flips the accent styling and enables them.
+    Same 50px height in every state - verified the table never shifts
+    (bar y524/h50, table y584/h227 across idle -> 1 selected -> idle).
+    Content: count + Clear + "Delete..." only (no hint text - the dialog
+    already carries the permanence warning).
+  * Delete opens components/DeleteCampaignsDialog.tsx, which auto-fetches
+    api.cleanupPreview(ids) on mount (the old manual "Preview deletion"
+    button step is gone), renders the stat grid, blocks on running/analyzing
+    campaigns, and requires the exact DELETE_CAMPAIGNS text before the
+    danger button enables. It queues api.deleteCampaigns('selected', ids),
+    trackJob + toast, then the page clears selection and invalidates.
+  * scope='all' was deliberately DROPPED from the UI (only "delete what you
+    checked" remains); the backend endpoint still supports it, just unlinked.
+  * CSS: added .bulk-bar/.col-check/.table-wrap checkbox rules; removed the
+    now-unused .checklist rules (no type=radio inputs exist anywhere now).
+  * NOTE: cleanup preview for even ONE campaign takes ~27s (Firestore
+    aggregation + Notion counts) - the dialog just says "Scanning records..."
+    during it. Same backend cost as the old section, not a regression.
 - Headless verification scripts live in C:\Users\user\AppData\Local\Temp\
   opencode\ (check_nav.py, check_edit.py, ui_test.py, style_test.py) and are
   run with $env:PYTHONIOENCODING="utf-8"; python <script>. They drive a

@@ -1,4 +1,4 @@
-import { NavLink, Navigate, Route, Routes } from 'react-router-dom';
+import { NavLink, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { Toaster } from 'sonner';
 import JobWatcher from './components/JobWatcher';
 import HomePage from './pages/HomePage';
@@ -37,6 +37,10 @@ function NotFoundPage() {
 }
 
 export default function App() {
+  const { pathname } = useLocation();
+  // Leads live outside /campaigns, but a lead is a campaign-scoped record —
+  // keep "Campaigns" lit while drilling into one so the nav always reads.
+  const campaignsSection = pathname.startsWith('/campaigns') || pathname.startsWith('/leads');
   return (
     <div className="layout">
       <a className="skip-link" href="#main">Skip to content</a>
@@ -47,7 +51,10 @@ export default function App() {
         </p>
         <nav className="nav" aria-label="Primary">
           <NavLink to="/" end>{ICONS.home}Home</NavLink>
-          <NavLink to="/campaigns">{ICONS.campaigns}Campaigns</NavLink>
+          <NavLink
+            to="/campaigns"
+            className={() => (campaignsSection ? 'active' : undefined)}
+          >{ICONS.campaigns}Campaigns</NavLink>
           <NavLink to="/outreach">{ICONS.outreach}Outreach</NavLink>
           <NavLink to="/exports">{ICONS.exports}Exports</NavLink>
           <NavLink to="/config">{ICONS.config}Config</NavLink>

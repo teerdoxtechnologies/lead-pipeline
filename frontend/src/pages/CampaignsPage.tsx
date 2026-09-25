@@ -57,7 +57,7 @@ export default function CampaignsPage() {
     mutationFn: (body: { name: string; niche: string; location: string }) => api.createCampaign(body),
     onSuccess: (c) => {
       setForm({ name: '', niche: '', location: '' });
-      toast.success(`Campaign “${c.name}” created — scrape started.`);
+      toast.success(`Campaign “${c.name}” created. Open it and press Run full to start scraping.`);
       qc.invalidateQueries({ queryKey: ['campaigns'] });
     },
   });
@@ -93,7 +93,6 @@ export default function CampaignsPage() {
       <div className="page-head">
         <div>
           <h1>Campaigns</h1>
-          <p>Start a new scrape below, then open a campaign to work its leads, sites and outreach.</p>
         </div>
         <div className="row">
           <select aria-label="Filter by status" value={status} onChange={(e) => setStatus(e.target.value)}>
@@ -117,7 +116,7 @@ export default function CampaignsPage() {
         </div>
       </div>
 
-      <Section title="Start a campaign" hint="Creates the campaign and starts a Maps scrape for the niche + location.">
+      <Section title="New campaign">
         <form onSubmit={create} className="row">
           <input aria-label="Campaign name" placeholder="e.g. Atlanta cleaners" value={form.name}
             onChange={(e) => setForm({ ...form, name: e.target.value })} required style={{ minWidth: 220 }} />
@@ -126,7 +125,7 @@ export default function CampaignsPage() {
           <input aria-label="Location" placeholder="e.g. atlanta" value={form.location}
             onChange={(e) => setForm({ ...form, location: e.target.value })} required />
           <button type="submit" disabled={createMut.isPending}>
-            {createMut.isPending ? 'Creating…' : 'Create and scrape'}
+            {createMut.isPending ? 'Creating…' : 'Create'}
           </button>
         </form>
       </Section>
@@ -236,7 +235,7 @@ export default function CampaignsPage() {
                   <td colSpan={8}>
                     <EmptyState
                       title="No campaigns match"
-                      body="Start one above, or change the status filter."
+                      body="Create one above, or change the status filter."
                     />
                   </td>
                 </tr>

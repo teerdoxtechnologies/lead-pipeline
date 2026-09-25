@@ -441,6 +441,11 @@ textarea { width: 100%; resize: vertical; }
 .filters label { display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; font-weight: 600; color: var(--muted); }
 .filters label input, .filters label select { min-width: 150px; }
 
+fieldset { border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 10px 12px; margin: 12px 0; display: grid; gap: 8px; }
+fieldset legend { font-size: 12.5px; font-weight: 600; color: var(--muted); padding: 0 6px; }
+fieldset .row input[type='checkbox'] { margin: 0; }
+.field-options { display: flex; flex-wrap: wrap; gap: 8px 18px; }
+
 .err {
   background: var(--danger-soft);
   border: 1px solid var(--danger-text);
@@ -679,6 +684,8 @@ details.dump-wrap summary { cursor: pointer; font-weight: 600; font-size: 13.5px
   box-shadow: var(--shadow);
   max-width: 520px;
   width: 100%;
+  max-height: calc(100vh - 40px);
+  overflow-y: auto;
   padding: 22px 24px;
 }
 .dialog p { font-size: 14px; margin: 8px 0; }

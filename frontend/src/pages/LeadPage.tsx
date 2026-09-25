@@ -5,6 +5,7 @@ import { toast } from 'sonner';
 import { api, type Outreach } from '../lib/api';
 import ConfirmSendDialog from '../components/ConfirmSendDialog';
 import EditContactDialog from '../components/EditContactDialog';
+import RepairMapsDataDialog from '../components/RepairMapsDataDialog';
 import { trackJob } from '../lib/jobs';
 import { useSiteUrls } from '../lib/site';
 import { fmtDate, isActiveJob, relTime } from '../lib/format';
@@ -30,6 +31,7 @@ export default function LeadPage() {
   const [pending, setPending] = useState<Outreach | null>(null);
   const [sending, setSending] = useState(false);
   const [editContactOpen, setEditContactOpen] = useState(false);
+  const [repairOpen, setRepairOpen] = useState(false);
 
   const leadQ = useQuery({ queryKey: ['lead', leadId], queryFn: () => api.lead(leadId) });
   const diagQ = useQuery({ queryKey: ['lead-diag', leadId], queryFn: () => api.leadDiagnostics(leadId) });
@@ -255,6 +257,14 @@ export default function LeadPage() {
           onSaved={() => invalidate()}
         />
       )}
+      {repairOpen && lead && (
+        <RepairMapsDataDialog
+          campaignId={campaignId}
+          initialLeadIds={leadId}
+          onClose={() => setRepairOpen(false)}
+          onQueued={(d) => { onJob(d, 'Repair Maps data'); setRepairOpen(false); }}
+        />
+      )}
 
       {lead && (
         <Section
@@ -269,9 +279,14 @@ export default function LeadPage() {
         title="Contact and Maps"
         hint="How to reach them and what the Maps scrape captured."
         action={
-          <button className="ghost btn-sm" onClick={() => setEditContactOpen(true)} disabled={!lead}>
-            Edit contact
-          </button>
+          <span className="row tight">
+            <button className="ghost btn-sm" onClick={() => setRepairOpen(true)} disabled={!lead}>
+              Repair Maps data
+            </button>
+            <button className="ghost btn-sm" onClick={() => setEditContactOpen(true)} disabled={!lead}>
+              Edit contact
+            </button>
+          </span>
         }
       >
         {leadQ.isLoading ? <p className="muted small">Loading…</p> : lead ? (

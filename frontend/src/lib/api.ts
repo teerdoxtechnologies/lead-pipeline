@@ -1,5 +1,16 @@
 const BASE = '';
 
+function repairQuery(params?: RepairMapsDataParams): string {
+  if (!params) return '';
+  const qs = new URLSearchParams();
+  if (params.fields) qs.set('fields', params.fields);
+  if (params.force !== undefined) qs.set('force', String(params.force));
+  if (params.lead_ids) qs.set('lead_ids', params.lead_ids);
+  if (params.sync_notion !== undefined) qs.set('sync_notion', String(params.sync_notion));
+  const s = qs.toString();
+  return s ? `?${s}` : '';
+}
+
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
     headers: { 'Content-Type': 'application/json' },
@@ -12,6 +23,35 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const ct = res.headers.get('content-type') ?? '';
   if (ct.includes('application/json')) return (await res.json()) as T;
   return (await res.text()) as unknown as T;
+}
+
+export interface RepairMapsDataParams {
+  fields?: string;
+  force?: boolean;
+  lead_ids?: string;
+  sync_notion?: boolean;
+}
+
+export interface MapsRepairCandidate {
+  lead_id: string;
+  business_name: string;
+  google_maps_url?: string;
+  repair_fields: string[];
+}
+
+export interface MapsRepairPlan {
+  campaign_id: string;
+  fields: string[];
+  force: boolean;
+  lead_ids: string[];
+  total_selected: number;
+  repair_candidates: number;
+  skipped_valid: number;
+  missing_google_maps_url: number;
+  field_counts: Record<string, number>;
+  candidates: MapsRepairCandidate[];
+  skipped: { lead_id: string; business_name: string; reason: string }[];
+  missing_google_maps_url_leads: { lead_id: string; business_name: string }[];
 }
 
 export const api = {
@@ -30,9 +70,10 @@ export const api = {
   resume: (id: string) => req<Job>(`/api/campaigns/${id}/resume`, { method: 'POST' }),
   cancel: (id: string) => req<unknown>(`/api/campaigns/${id}/cancel`, { method: 'POST' }),
   repairWebsites: (id: string) => req<Job>(`/api/campaigns/${id}/repair-websites`, { method: 'POST' }),
-  repairMapsData: (id: string) => req<Job>(`/api/campaigns/${id}/repair-maps-data`, { method: 'POST' }),
-  repairMapsDataPreview: (id: string) =>
-    req<{ campaign_id: string; leads: number; preview: unknown[] }>(`/api/campaigns/${id}/repair-maps-data/preview`),
+  repairMapsData: (id: string, params?: RepairMapsDataParams) =>
+    req<Job>(`/api/campaigns/${id}/repair-maps-data${repairQuery(params)}`, { method: 'POST' }),
+  repairMapsDataPreview: (id: string, params?: RepairMapsDataParams) =>
+    req<MapsRepairPlan>(`/api/campaigns/${id}/repair-maps-data/preview${repairQuery(params)}`),
   syncNotion: (id: string, force = false) =>
     req<Job>(`/api/campaigns/${id}/sync-notion${force ? '?force=true' : ''}`, { method: 'POST' }),
   generateOutreachDrafts: (campaignId: string, body?: { lead_ids?: string[] }) =>

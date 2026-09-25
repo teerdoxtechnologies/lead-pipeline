@@ -9,6 +9,7 @@ import { leadStageSummary } from '../lib/leadStage';
 import {
   Breadcrumbs, EmptyState, Field, Fields, Section, SkeletonRows, StatCard, StatusPill,
 } from '../components/ui';
+import RepairMapsDataDialog from '../components/RepairMapsDataDialog';
 
 const RUNNING = new Set(['running', 'analyzing', 'pending', 'scraped']);
 const PAGE_SIZE = 25;
@@ -38,6 +39,7 @@ export default function CampaignDetailPage() {
   const [cleanResult, setCleanResult] = useState<WebsiteCleanupResult | null>(null);
   const [cleanBusy, setCleanBusy] = useState(false);
   const [cleanErr, setCleanErr] = useState('');
+  const [repairOpen, setRepairOpen] = useState(false);
 
   const listQ = useQuery({
     queryKey: ['campaigns', ''],
@@ -107,14 +109,13 @@ export default function CampaignDetailPage() {
   const cancelMut = useMutation({ mutationFn: () => api.cancel(id), onSuccess: invalidate });
   const auditMut = useMutation({ mutationFn: () => api.auditWebsites(id, {}), onSuccess: (d) => onJob(d, 'Run audits') });
   const regenMut = useMutation({ mutationFn: () => api.regenerateDrafts(id), onSuccess: (d) => onJob(d, 'Regenerate drafts') });
-  const repairMapsMut = useMutation({ mutationFn: () => api.repairMapsData(id), onSuccess: (d) => onJob(d, 'Repair Maps data') });
   const repairWebsitesMut = useMutation({ mutationFn: () => api.repairWebsites(id), onSuccess: (d) => onJob(d, 'Repair websites') });
   const syncNotionMut = useMutation({ mutationFn: () => api.syncNotion(id), onSuccess: (d) => onJob(d, 'Sync Notion') });
   const genDraftsMut = useMutation({ mutationFn: () => api.generateOutreachDrafts(id), onSuccess: (d) => onJob(d, 'Generate drafts') });
 
   const queueBusy = fullMut.isPending || scrapeMut.isPending || resumeMut.isPending || cancelMut.isPending;
 
-  const actionErr = [fullMut, scrapeMut, resumeMut, cancelMut, auditMut, regenMut, repairMapsMut, repairWebsitesMut, syncNotionMut, genDraftsMut]
+  const actionErr = [fullMut, scrapeMut, resumeMut, cancelMut, auditMut, regenMut, repairWebsitesMut, syncNotionMut, genDraftsMut]
     .map((m) => (m.error instanceof Error ? m.error.message : m.error ? String(m.error) : ''))
     .filter(Boolean)[0];
   const err =
@@ -468,8 +469,8 @@ export default function CampaignDetailPage() {
           <button className="ghost btn-sm" onClick={() => genDraftsMut.mutate()} disabled={genDraftsMut.isPending}>
             {genDraftsMut.isPending ? 'Queuing…' : 'Generate drafts'}
           </button>
-          <button className="ghost btn-sm" onClick={() => repairMapsMut.mutate()} disabled={repairMapsMut.isPending}>
-            {repairMapsMut.isPending ? 'Queuing…' : 'Repair Maps data'}
+          <button className="ghost btn-sm" onClick={() => setRepairOpen(true)}>
+            Repair Maps data
           </button>
           <button className="ghost btn-sm" onClick={() => repairWebsitesMut.mutate()} disabled={repairWebsitesMut.isPending}>
             {repairWebsitesMut.isPending ? 'Queuing…' : 'Repair websites'}
@@ -482,6 +483,13 @@ export default function CampaignDetailPage() {
           Generate drafts fills gaps for published sites with no outreach yet. Repairs re-derive website flags and Maps fields.
         </p>
       </Section>
+      {repairOpen && (
+        <RepairMapsDataDialog
+          campaignId={id}
+          onClose={() => setRepairOpen(false)}
+          onQueued={(d) => { onJob(d, 'Repair Maps data'); setRepairOpen(false); }}
+        />
+      )}
 
       <Section
         title="Jobs"

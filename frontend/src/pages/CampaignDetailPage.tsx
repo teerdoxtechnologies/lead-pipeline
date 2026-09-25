@@ -123,6 +123,9 @@ export default function CampaignDetailPage() {
     actionErr;
 
   const s = statusQ.data;
+  const rawFilter = campaign?.scrape_settings?.website_filter;
+  const websiteFilter =
+    rawFilter === 'with_website' || rawFilter === 'all' ? rawFilter : 'no_website';
   const job = jobQ.data;
   const draftMap = useMemo(() => draftsByLead(draftsQ.data ?? []), [draftsQ.data]);
   const candMap = useMemo(() => {
@@ -226,8 +229,15 @@ export default function CampaignDetailPage() {
       <div className="stat-grid" role="group" aria-label="Campaign totals">
         <StatCard label="Found" value={num(s?.businesses_found)} hint="places returned" tone="accent" />
         <StatCard label="Saved" value={num(s?.businesses_persisted)} hint="in database" />
-        <StatCard label="With website" value={num(s?.with_website)} hint="audit eligible" tone="info" />
-        <StatCard label="No website" value={num(s?.missing_website)} hint="build targets" tone="warn" />
+        {websiteFilter !== 'all' && (
+          <StatCard label="Filtered" value={num(s?.website_filtered)} hint="dropped by website filter" tone="neutral" />
+        )}
+        {(websiteFilter === 'with_website' || websiteFilter === 'all') && (
+          <StatCard label="With website" value={num(s?.with_website)} hint="audit eligible" tone="info" />
+        )}
+        {(websiteFilter === 'no_website' || websiteFilter === 'all') && (
+          <StatCard label="No website" value={num(s?.missing_website)} hint="build targets" tone="warn" />
+        )}
         <StatCard label="Analyzed" value={num(s?.analyzed)} hint={`of ${num(s?.total)} leads · audit + no-site reports`} />
         <StatCard
           label="Emailed"

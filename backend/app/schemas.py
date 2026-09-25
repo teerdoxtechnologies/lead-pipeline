@@ -576,6 +576,7 @@ class StatusResponse(BaseModel):
     parser_anomalies: int = 0
     invalid_address_domains: int = 0
     global_duplicates_skipped: int = 0
+    website_filtered: int = 0
     stop_reason: Optional[str] = None
     max_maps_results_used: Optional[int] = None
 

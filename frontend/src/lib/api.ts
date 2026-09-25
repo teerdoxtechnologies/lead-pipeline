@@ -158,6 +158,7 @@ export interface Campaign {
   location: string;
   status: string;
   stats?: CampaignStats;
+  scrape_settings?: { website_filter?: string; [k: string]: unknown } | null;
   progress?: { stage?: string; message?: string } | null;
   created_at?: string | null;
   updated_at?: string | null;
@@ -175,6 +176,7 @@ export interface CampaignStatus extends Record<string, unknown> {
   businesses_persisted?: number;
   with_website?: number;
   missing_website?: number;
+  website_filtered?: number;
   stop_reason?: string | null;
 }
 

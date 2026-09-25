@@ -1498,6 +1498,7 @@ async def get_campaign_status(campaign_id: str):
         parser_anomalies=maps.get("parser_anomalies", 0),
         invalid_address_domains=maps.get("invalid_address_domains", 0),
         global_duplicates_skipped=maps.get("global_duplicates_skipped", 0),
+        website_filtered=maps.get("website_filtered", 0),
         stop_reason=maps.get("stop_reason"),
         max_maps_results_used=maps.get("max_maps_results_used") or maps.get("result_limit"),
     )

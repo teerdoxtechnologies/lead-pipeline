@@ -261,6 +261,7 @@ export default function LeadPage() {
         <RepairMapsDataDialog
           campaignId={campaignId}
           initialLeadIds={leadId}
+          leadIdsLocked
           onClose={() => setRepairOpen(false)}
           onQueued={(d) => { onJob(d, 'Repair Maps data'); setRepairOpen(false); }}
         />

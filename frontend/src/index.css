@@ -412,6 +412,7 @@ button.ghost:hover:not(:disabled) { background: var(--panel-2); border-color: va
 button.danger { background: transparent; border-color: var(--danger-text); color: var(--danger-text); }
 button.danger:hover:not(:disabled) { background: var(--danger-soft); }
 button.btn-sm { min-height: 32px; padding: 5px 12px; font-size: 13px; }
+input:disabled, select:disabled { opacity: 0.6; cursor: not-allowed; }
 
 input, select, textarea {
   font: inherit;

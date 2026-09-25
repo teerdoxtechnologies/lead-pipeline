@@ -18,11 +18,13 @@ const MAX_LISTED = 20;
 export default function RepairMapsDataDialog({
   campaignId,
   initialLeadIds,
+  leadIdsLocked,
   onClose,
   onQueued,
 }: {
   campaignId: string;
   initialLeadIds?: string;
+  leadIdsLocked?: boolean;
   onClose: () => void;
   onQueued: (job: { job_id?: string }) => void;
 }) {
@@ -129,6 +131,7 @@ export default function RepairMapsDataDialog({
           className="confirm-input"
           placeholder="Comma-separated IDs, blank means every lead"
           value={leadIds}
+          disabled={leadIdsLocked}
           onChange={(e) => { markDirty(); setLeadIds(e.target.value); }}
           autoComplete="off"
           spellCheck={false}

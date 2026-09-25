@@ -159,18 +159,41 @@ a:hover { text-decoration-thickness: 2px; }
   padding: 22px 16px;
   background: var(--bg-elev);
   border-right: 1px solid var(--border);
+  overflow: hidden;
+  transition: width 160ms ease, padding 160ms ease;
 }
 
-.brand { font-size: 19px; font-weight: 800; letter-spacing: -0.02em; margin: 0; padding: 0 8px; }
-.brand .dot { color: var(--primary); }
-.brand small {
-  display: block;
-  font-size: 12.5px;
-  font-weight: 500;
-  letter-spacing: 0;
-  color: var(--muted);
-  margin-top: 2px;
+/* Thematic break where the brand used to be: occupies the same 29px slot so
+   the nav items never shift when the label was removed. */
+.sidebar-rule {
+  width: 100%;
+  height: 29px;
+  margin: 0;
+  border: none;
+  border-bottom: 1px solid var(--border);
 }
+
+/* Handle is absolute so it glides with the rail edge instead of snapping
+   between row/column positions when the head re-flows. */
+.nav-toggle {
+  position: absolute;
+  right: 16px;
+  bottom: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--bg-elev);
+  color: var(--muted);
+  cursor: pointer;
+  padding: 0;
+  z-index: 1;
+}
+.nav-toggle:hover { background: var(--panel-2); color: var(--text); }
+.nav-toggle:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
 
 .nav { display: flex; flex-direction: column; gap: 2px; }
 .nav a {
@@ -184,21 +207,39 @@ a:hover { text-decoration-thickness: 2px; }
   font-weight: 600;
   font-size: 14px;
   border-left: 3px solid transparent;
+  transition: padding 160ms ease, background-color 120ms ease, color 120ms ease;
 }
 .nav a:hover { background: var(--panel-2); color: var(--text); }
 .nav a.active { background: var(--accent-soft); color: var(--text); border-left-color: var(--primary); }
 .nav a svg { flex-shrink: 0; }
+.nav-label {
+  display: inline-block;
+  max-width: 260px;
+  overflow: hidden;
+  white-space: nowrap;
+  transition: max-width 160ms ease, opacity 140ms ease;
+}
 
 .sidebar .foot {
   margin-top: auto;
-  padding: 12px 8px 0;
+  padding: 12px 8px 44px;
   border-top: 1px solid var(--border);
   font-size: 12.5px;
   color: var(--muted);
   display: flex;
   flex-direction: column;
   gap: 6px;
+  max-height: 110px;
+  overflow: hidden;
+  transition: max-height 160ms ease, opacity 140ms ease, padding 160ms ease;
 }
+
+/* collapsed: 76px icon rail. Everything below is CSS-only tweening so the
+   rail, icons and labels all move on the same clock (no frame-0 snap). */
+.sidebar.collapsed { width: 76px; padding: 22px 12px; }
+.sidebar.collapsed .nav a { padding: 9px 15px; }
+.sidebar.collapsed .nav-label { max-width: 0; opacity: 0; }
+.sidebar.collapsed .foot { max-height: 0; opacity: 0; padding-top: 0; border-top-color: transparent; }
 
 .main {
   flex: 1;
@@ -662,8 +703,12 @@ details.dump-wrap summary { cursor: pointer; font-weight: 600; font-size: 13.5px
     border-right: none;
     border-bottom: 1px solid var(--border);
   }
-  .brand { padding: 0; font-size: 17px; white-space: nowrap; }
-  .brand small { display: none; }
+  .nav-toggle { display: none; }
+  .sidebar-rule { display: none; }
+  /* the top bar never collapses — force the expanded look */
+  .sidebar.collapsed { width: auto; padding: 12px 16px; }
+  .sidebar.collapsed .nav a { padding: 8px 10px; }
+  .sidebar.collapsed .nav-label { max-width: 260px; opacity: 1; }
   .sidebar .nav { flex-direction: row; flex-wrap: wrap; gap: 4px; }
   .sidebar .nav a { border-left: none; border-bottom: 3px solid transparent; padding: 8px 10px; }
   .sidebar .nav a.active { border-bottom-color: var(--primary); }

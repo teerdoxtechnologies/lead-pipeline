@@ -2162,6 +2162,9 @@ o_website follow-ups now use the new preview-specific subject/body pair for oll
 - Standing user rules (commits): NEVER bundle unrelated changes in one commit.
   Group logically and commit atomically as many times as needed, and ask for
   permission before each commit. Ask permission before editing code at all.
+- Standing user rule (handoff): ALWAYS update this file as part of the SAME
+  commit as the code it describes. Never commit code and its handoff notes
+  separately - the notes must travel with the change.
 
 
 2026-09-23..25 frontend work (the whole batch is committed through 827539f):
@@ -2191,6 +2194,36 @@ o_website follow-ups now use the new preview-specific subject/body pair for oll
   use toast.success for a "you must do X first" message.
 - Sidebar: the Campaigns NavLink is active for BOTH /campaigns* and /leads*
   (lead pages are campaign-scoped), see App.tsx campaignsSection.
+- Sidebar is collapsible: the toggle button flips App.tsx state
+  (aria-expanded/aria-controls on #sidebar) and swaps .sidebar.collapsed.
+  Collapsed is a 76px icon rail; the button is position:absolute (right/bottom
+  of the sidebar) so it glides WITH the rail edge instead of snapping between
+  layouts, and .foot reserves 44px padding-bottom so it never covers the
+  FastAPI docs link.
+- The collapse animation is CSS-only (160ms) - JS just toggles the class.
+  History: v1 tweened the rail while contents snapped at frame 0
+  (justify-content/display swaps) and the user reported it as a jump; v2 was a
+  full snap. FINAL rule: tween EVERYTHING on the same clock - rail
+  width/padding, .nav a padding, .nav-label max-width 260->0 + opacity wipe
+  (never display:none or clip-path, those are frame-0 swaps), and the
+  sidebar-rule width. Never mix a tweened container with instant content
+  swaps. Nav links stay justify-content:flex-start in both states (rail
+  centers via padding-left:15px) so icons only move ~1px.
+- Brand was REMOVED entirely: no "LP", no "Lead Pipeline.", no "campaign
+  console" tagline (user rejected all of them). An <hr class="sidebar-rule">
+  (29px tall slot + border-bottom) sits where the brand was so nav items
+  never shift: verified nav y=71, x=16 expanded / x=12 collapsed, before and
+  after. Keep that slot height if you touch it.
+- Labels: collapsed they wipe to max-width:0 + opacity:0 but stay in the DOM,
+  so accessible names still resolve (get_by_role('link', name='Campaigns')
+  works while collapsed) and title tooltips show the label.
+- State is in-memory only on purpose - the user rejected localStorage
+  persistence for it (called it an unnecessary optimization). It survives
+  route changes (App stays mounted) but resets on reload.
+- prefers-reduced-motion is already handled by the global rule at the bottom
+  of index.css (transition-duration 0.001s).
+- The top bar never collapses below 900px: toggle hidden, .sidebar-rule
+  hidden, expanded rules forced even if .collapsed is set.
 - Headless verification scripts live in C:\Users\user\AppData\Local\Temp\
   opencode\ (check_nav.py, check_edit.py, ui_test.py, style_test.py) and are
   run with $env:PYTHONIOENCODING="utf-8"; python <script>. They drive a

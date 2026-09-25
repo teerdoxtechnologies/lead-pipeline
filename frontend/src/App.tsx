@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { NavLink, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { Toaster } from 'sonner';
 import JobWatcher from './components/JobWatcher';
@@ -38,26 +39,38 @@ function NotFoundPage() {
 
 export default function App() {
   const { pathname } = useLocation();
+  const [collapsed, setCollapsed] = useState(false);
+  const toggleSidebar = () => setCollapsed((c) => !c);
   // Leads live outside /campaigns, but a lead is a campaign-scoped record —
   // keep "Campaigns" lit while drilling into one so the nav always reads.
   const campaignsSection = pathname.startsWith('/campaigns') || pathname.startsWith('/leads');
+  const navItem = (label: string) => ({ title: label });
   return (
     <div className="layout">
       <a className="skip-link" href="#main">Skip to content</a>
-      <aside className="sidebar">
-        <p className="brand">
-          Lead Pipeline<span className="dot">.</span>
-          <small>campaign console</small>
-        </p>
+      <aside className={`sidebar${collapsed ? ' collapsed' : ''}`} id="sidebar">
+        <hr className="sidebar-rule" />
+        <button
+          type="button"
+          className="nav-toggle"
+          onClick={toggleSidebar}
+          aria-expanded={!collapsed}
+          aria-controls="sidebar"
+          aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+        >
+          {icon(collapsed ? 'M9 6l6 6-6 6' : 'M15 6l-6 6 6 6')}
+        </button>
         <nav className="nav" aria-label="Primary">
-          <NavLink to="/" end>{ICONS.home}Home</NavLink>
+          <NavLink to="/" end {...navItem('Home')}>{ICONS.home}<span className="nav-label">Home</span></NavLink>
           <NavLink
             to="/campaigns"
             className={() => (campaignsSection ? 'active' : undefined)}
-          >{ICONS.campaigns}Campaigns</NavLink>
-          <NavLink to="/outreach">{ICONS.outreach}Outreach</NavLink>
-          <NavLink to="/exports">{ICONS.exports}Exports</NavLink>
-          <NavLink to="/config">{ICONS.config}Config</NavLink>
+            {...navItem('Campaigns')}
+          >{ICONS.campaigns}<span className="nav-label">Campaigns</span></NavLink>
+          <NavLink to="/outreach" {...navItem('Outreach')}>{ICONS.outreach}<span className="nav-label">Outreach</span></NavLink>
+          <NavLink to="/exports" {...navItem('Exports')}>{ICONS.exports}<span className="nav-label">Exports</span></NavLink>
+          <NavLink to="/config" {...navItem('Config')}>{ICONS.config}<span className="nav-label">Config</span></NavLink>
         </nav>
         <div className="foot">
           <a href="http://127.0.0.1:8000/docs" target="_blank" rel="noreferrer">FastAPI docs</a>

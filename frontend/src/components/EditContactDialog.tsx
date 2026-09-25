@@ -30,15 +30,15 @@ export default function EditContactDialog({
     const addr = newEmail.trim().toLowerCase();
     if (!addr) return;
     if (!addr.includes('@') || !addr.split('@')[1]?.includes('.')) {
-      toast.error('Invalid email address.');
+      toast.warning('Invalid email address.');
       return;
     }
     if (emails.some((e) => e.toLowerCase() === addr)) {
-      toast.error('That email is already on this lead.');
+      toast.warning('That email is already on this lead.');
       return;
     }
     if (emails.length >= 20) {
-      toast.error('At most 20 emails per lead.');
+      toast.warning('At most 20 emails per lead.');
       return;
     }
     setEmails([...emails, addr]);

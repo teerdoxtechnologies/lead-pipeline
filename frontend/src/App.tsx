@@ -56,7 +56,7 @@ export default function App() {
           <a href="http://127.0.0.1:8000/docs" target="_blank" rel="noreferrer">FastAPI docs</a>
         </div>
       </aside>
-      <Toaster position="bottom-right" theme="system" closeButton />
+      <Toaster position="bottom-right" theme="system" richColors closeButton />
       <JobWatcher />
       <main className="main" id="main">
         <Routes>

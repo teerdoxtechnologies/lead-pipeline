@@ -12,7 +12,7 @@ const NO_DRAFTS: Outreach[] = [];
 
 export default function CampaignsPage() {
   const [status, setStatus] = useState('');
-  const [form, setForm] = useState({ name: '', niche: '', location: '' });
+  const [form, setForm] = useState({ niche: '', location: '' });
   const [sel, setSel] = useState<string[]>([]);
   const [delOpen, setDelOpen] = useState(false);
   const qc = useQueryClient();
@@ -54,9 +54,9 @@ export default function CampaignsPage() {
     : drafts.filter((d) => String(d.status ?? '') === 'converted').length;
 
   const createMut = useMutation({
-    mutationFn: (body: { name: string; niche: string; location: string }) => api.createCampaign(body),
+    mutationFn: (body: { niche: string; location: string }) => api.createCampaign(body),
     onSuccess: (c) => {
-      setForm({ name: '', niche: '', location: '' });
+      setForm({ niche: '', location: '' });
       toast.success(`Campaign “${c.name}” created. Open it and press Run full to start scraping.`);
       qc.invalidateQueries({ queryKey: ['campaigns'] });
     },
@@ -64,7 +64,7 @@ export default function CampaignsPage() {
 
   function create(e: React.FormEvent) {
     e.preventDefault();
-    if (!form.name || !form.niche || !form.location) return;
+    if (!form.niche || !form.location) return;
     createMut.reset();
     createMut.mutate(form);
   }
@@ -117,13 +117,17 @@ export default function CampaignsPage() {
       </div>
 
       <Section title="New campaign">
-        <form onSubmit={create} className="row">
-          <input aria-label="Campaign name" placeholder="e.g. Atlanta cleaners" value={form.name}
-            onChange={(e) => setForm({ ...form, name: e.target.value })} required style={{ minWidth: 220 }} />
-          <input aria-label="Niche" placeholder="e.g. cleaners" value={form.niche}
-            onChange={(e) => setForm({ ...form, niche: e.target.value })} required />
-          <input aria-label="Location" placeholder="e.g. atlanta" value={form.location}
-            onChange={(e) => setForm({ ...form, location: e.target.value })} required />
+        <form onSubmit={create} className="filters">
+          <label>
+            Niche
+            <input placeholder="e.g. cleaners" value={form.niche}
+              onChange={(e) => setForm({ ...form, niche: e.target.value })} required />
+          </label>
+          <label>
+            Location
+            <input placeholder="e.g. atlanta" value={form.location}
+              onChange={(e) => setForm({ ...form, location: e.target.value })} required />
+          </label>
           <button type="submit" disabled={createMut.isPending}>
             {createMut.isPending ? 'Creating…' : 'Create'}
           </button>

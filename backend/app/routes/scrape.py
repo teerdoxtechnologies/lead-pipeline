@@ -8,9 +8,11 @@ Campaign routes:
 from __future__ import annotations
 
 import logging
+import re
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
+from urllib.parse import quote
 
 from fastapi import APIRouter, HTTPException, Query, status
 from firebase_admin import firestore
@@ -19,11 +21,11 @@ from app.config import get_settings
 from app.firebase import (
     AUDIT_REPORTS,
     CAMPAIGNS,
+    CAMPAIGN_NAMES,
     EMAIL_DRAFTS,
     LEADS,
     NO_WEBSITE_REPORTS,
     SEARCH_EVIDENCE_CACHE,
-    add_document,
     delete_document,
     get_db,
     get_document,
@@ -100,6 +102,46 @@ async def get_job_status(job_id: str):
 # ---------------------------------------------------------------------------
 
 
+def _slug_campaign_name(niche: str, location: str) -> str:
+    """Build the campaign name as ``{niche}-{location}`` with no spaces."""
+    slug = re.sub(r"\s+", "-", f"{niche.strip()}-{location.strip()}".lower())
+    slug = re.sub(r"-{2,}", "-", slug).strip("-")
+    return slug or "campaign"
+
+
+def _campaign_name_key(name: str) -> str:
+    """Firestore doc ID reserving a campaign name (collision-free)."""
+    return quote(name, safe="-")
+
+
+@firestore.transactional
+def _insert_campaign_with_unique_name(transaction, data: dict, name: str) -> str:
+    """Insert the campaign doc and reserve its name in one transaction.
+
+    The reservation doc makes the uniqueness check atomic: two concurrent
+    creates for the same name cannot both commit (the loser aborts on the
+    reservation conflict and retries into the 409 below).
+    """
+    db = get_db()
+    name_ref = db.collection(CAMPAIGN_NAMES).document(_campaign_name_key(name))
+    if name_ref.get(transaction=transaction).exists:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f'Campaign "{name}" already exists.',
+        )
+    campaign_ref = db.collection(CAMPAIGNS).document()
+    transaction.set(campaign_ref, data)
+    transaction.set(
+        name_ref,
+        {
+            "campaign_id": campaign_ref.id,
+            "name": name,
+            "created_at": firestore.SERVER_TIMESTAMP,
+        },
+    )
+    return campaign_ref.id
+
+
 @router.post(
     "/campaigns",
     response_model=CampaignResponse,
@@ -109,12 +151,22 @@ async def get_job_status(job_id: str):
 async def create_campaign(body: CampaignCreate):
     """
     Create a new scraping campaign for a given niche and location.
+    The name is generated as ``{niche}-{location}`` (no spaces) and must be
+    unique: recreating an existing campaign name returns 409. Uniqueness is
+    enforced atomically via a name reservation doc, so concurrent duplicate
+    creates cannot both succeed.
     The campaign starts in *pending* state; call ``/scrape`` or ``/run-full``
     to kick off processing.
     """
+    name = _slug_campaign_name(body.niche, body.location)
+    if query_collection(CAMPAIGNS, filters=[("name", "==", name)], limit=1):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f'Campaign "{name}" already exists.',
+        )
     logger.info(
         "[Campaign API] Creating campaign name=%s niche=%s location=%s max_results=%s dedupe=%s listing_media=%s",
-        body.name,
+        name,
         body.niche,
         body.location,
         body.max_results,
@@ -122,7 +174,7 @@ async def create_campaign(body: CampaignCreate):
         body.listing_media_enabled,
     )
     data = {
-        "name": body.name,
+        "name": name,
         "niche": body.niche,
         "location": body.location,
         "status": CampaignStatus.pending.value,
@@ -143,7 +195,7 @@ async def create_campaign(body: CampaignCreate):
             "listing_media_enabled": body.listing_media_enabled,
         },
     }
-    doc_id = add_document(CAMPAIGNS, data)
+    doc_id = _insert_campaign_with_unique_name(get_db().transaction(), data, name)
     doc = get_document(CAMPAIGNS, doc_id)
     if doc is None:
         raise HTTPException(
@@ -1086,6 +1138,9 @@ def _delete_campaign_doc(campaign_id: str) -> bool:
 
     _archive_notion_page(campaign)
     delete_document(CAMPAIGNS, campaign_id)
+    name = (campaign.get("name") or "").strip()
+    if name:
+        delete_document(CAMPAIGN_NAMES, _campaign_name_key(name))
     return True
 
 

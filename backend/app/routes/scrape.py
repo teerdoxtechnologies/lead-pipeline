@@ -179,6 +179,8 @@ async def create_campaign(body: CampaignCreate):
         "niche": body.niche,
         "location": body.location,
         "status": CampaignStatus.pending.value,
+        "created_at": firestore.SERVER_TIMESTAMP,
+        "updated_at": firestore.SERVER_TIMESTAMP,
         "stats": {
             "total": 0,
             "scraped": 0,

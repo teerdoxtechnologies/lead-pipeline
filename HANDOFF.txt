@@ -2257,6 +2257,12 @@ o_website follow-ups now use the new preview-specific subject/body pair for oll
   {niche}-{location} (lowercased, whitespace becomes dashes, no spaces;
   scrape.py _slug_campaign_name). The create form and CampaignCreate schema
   take only niche and location; CampaignResponse still returns name.
+  The transactional insert stamps created_at/updated_at (SERVER_TIMESTAMP),
+  matching the old add_document semantics. This is load-bearing: the list
+  orders by created_at DESC and Firestore drops docs missing the order-by
+  field, so timestamp-less campaigns are invisible (success toast but no
+  row). Backfilled 2026-09-25 (roofing-companies-atlanta). Rule: every
+  campaign write path must stamp created_at.
   The main campaigns page has no stat row (removed entirely, with its
   overview rollup); per-campaign stats live on the detail page.
   Names are unique: creating a campaign whose slug matches any existing

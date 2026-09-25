@@ -86,6 +86,8 @@ class CreateCampaignUniquenessTests(unittest.TestCase):
         self.assertIs(transaction_arg, get_db.return_value.transaction.return_value)
         self.assertEqual(name_arg, "house-cleaners-new-york")
         self.assertEqual(data_arg["name"], "house-cleaners-new-york")
+        self.assertIn("created_at", data_arg)
+        self.assertIn("updated_at", data_arg)
         self.assertEqual(out.name, "house-cleaners-new-york")
         self.assertEqual(out.status.value, "pending")
 

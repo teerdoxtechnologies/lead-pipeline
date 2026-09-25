@@ -33,7 +33,7 @@ from app.firebase import (
     get_document,
     query_collection,
 )
-from app.schemas import ExportJobResponse, ExportRequest, ExportStatusResponse
+from app.schemas import CampaignStatus, ExportJobResponse, ExportRequest, ExportStatusResponse
 from app.workers.celery_app import celery_app
 from app.workers.tasks import export_campaigns_zip
 
@@ -190,7 +190,11 @@ def build_campaigns_zip_for_ids(campaign_ids: Optional[List[str]]) -> bytes:
             if campaign:
                 campaigns.append(campaign)
     else:
-        campaigns = _query_all(CAMPAIGNS)
+        campaigns = [
+            doc
+            for doc in _query_all(CAMPAIGNS)
+            if doc.get("status") != CampaignStatus.deleting.value
+        ]
     return _build_all_campaigns_zip(campaigns)
 
 

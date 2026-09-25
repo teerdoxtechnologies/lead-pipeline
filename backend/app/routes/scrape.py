@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException, Query, status
@@ -24,6 +25,7 @@ from app.firebase import (
     SEARCH_EVIDENCE_CACHE,
     add_document,
     delete_document,
+    get_db,
     get_document,
     query_collection,
     update_document,
@@ -63,6 +65,14 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 DELETE_CONFIRMATION = "DELETE_CAMPAIGNS"
 CLEAR_SEARCH_EVIDENCE_CACHE_CONFIRMATION = "CLEAR_SEARCH_EVIDENCE_CACHE"
+# A tombstoned campaign whose purge never started (crash between the
+# tombstone and .delay(), broker outage, lost task) is re-enqueued once this
+# long has passed since its last requeue stamp. The purge is idempotent, so
+# duplicate re-enqueues are harmless.
+DELETING_REQUEUE_AFTER = timedelta(minutes=10)
+DELETE_BLOCKING_STATUSES = frozenset(
+    {CampaignStatus.running.value, CampaignStatus.analyzing.value}
+)
 
 
 # ---------------------------------------------------------------------------
@@ -169,6 +179,12 @@ def _ensure_campaign_can_run(
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Campaign is already running.",
+        )
+
+    if doc.get("status") == CampaignStatus.deleting.value:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Campaign is being deleted.",
         )
 
     logger.info(
@@ -1020,7 +1036,7 @@ def _ensure_campaign_mutable(campaign_id: str) -> dict:
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Campaign '{campaign_id}' not found.",
         )
-    if doc.get("status") in {CampaignStatus.running.value, CampaignStatus.analyzing.value}:
+    if doc.get("status") in DELETE_BLOCKING_STATUSES:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Campaign is running or analyzing. Stop or wait for it before deleting.",
@@ -1093,13 +1109,79 @@ def _all_campaign_ids() -> list[str]:
 
 
 def _campaigns_blocking_delete(campaign_ids: list[str]) -> list[str]:
-    blocking_statuses = {CampaignStatus.running.value, CampaignStatus.analyzing.value}
     blocked: list[str] = []
     for campaign_id in dict.fromkeys(campaign_ids):
         campaign = get_document(CAMPAIGNS, campaign_id)
-        if campaign and campaign.get("status") in blocking_statuses:
+        if campaign and campaign.get("status") in DELETE_BLOCKING_STATUSES:
             blocked.append(campaign_id)
     return blocked
+
+
+def _tombstone_campaigns(campaign_ids: list[str]) -> None:
+    """Mark campaigns as deleting so every read hides them immediately.
+
+    Runs in a Firestore transaction: the running/analyzing guard is read from
+    the same snapshot that gets written, so a campaign cannot flip to running
+    between the check and the tombstone (a concurrent start aborts the
+    transaction via conflict retry instead of resurrecting the row).
+    Missing docs are skipped (already gone). After this returns, the row is
+    invisible to users and the purge happens in the background.
+    """
+    db = get_db()
+    refs = [db.collection(CAMPAIGNS).document(cid) for cid in dict.fromkeys(campaign_ids)]
+    if not refs:
+        return
+    requeue_at = datetime.now(timezone.utc) + DELETING_REQUEUE_AFTER
+
+    @firestore.transactional
+    def _apply(transaction):
+        snapshots = [ref.get(transaction=transaction) for ref in refs]
+        blocked = [
+            snap.id
+            for snap in snapshots
+            if snap.exists and (snap.to_dict() or {}).get("status") in DELETE_BLOCKING_STATUSES
+        ]
+        if blocked:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    "Campaign is running or analyzing. Stop or wait for it "
+                    f"before deleting: {', '.join(blocked)}."
+                ),
+            )
+        for snap in snapshots:
+            if snap.exists:
+                transaction.update(
+                    snap.reference,
+                    {
+                        "status": CampaignStatus.deleting.value,
+                        "deleted_at": firestore.SERVER_TIMESTAMP,
+                        "requeue_at": requeue_at,
+                    },
+                )
+
+    _apply(db.transaction())
+
+
+def _stale_deleting_ids(campaigns: list[dict], now: datetime) -> list[str]:
+    """Tombstoned campaigns whose re-enqueue deadline has passed.
+
+    Pure selection helper so tests can cover it without Firestore. A missing
+    or unreadable requeue_at counts as stale: better to re-run an idempotent
+    purge than to strand a tombstone.
+    """
+    stale: list[str] = []
+    for doc in campaigns:
+        if doc.get("status") != CampaignStatus.deleting.value:
+            continue
+        requeue_at = doc.get("requeue_at")
+        if isinstance(requeue_at, datetime):
+            if requeue_at.tzinfo is None:
+                requeue_at = requeue_at.replace(tzinfo=timezone.utc)
+            if requeue_at > now:
+                continue
+        stale.append(str(doc.get("id") or ""))
+    return [cid for cid in stale if cid]
 
 
 def _bulk_campaign_action(
@@ -1182,15 +1264,32 @@ async def delete_campaigns(
                 detail="campaign_ids is required when scope=selected.",
             )
     else:
-        campaign_ids = None
+        campaign_ids = _all_campaign_ids()
 
+    if not campaign_ids:
+        return JobResponse(job_id="")
+
+    # Tombstone first: reads hide the campaigns immediately, then the purge
+    # runs in the background. If enqueueing fails, the tombstones stand and
+    # tasks.reconcile_deleting_campaigns re-enqueues them later.
     logger.info(
-        "[Campaign API] Queueing campaign delete scope=%s campaign_ids=%s.",
+        "[Campaign API] Tombstoning campaign delete scope=%s campaign_ids=%s.",
         scope,
-        campaign_ids or "all",
+        campaign_ids,
     )
-    task = bulk_delete_campaigns.delay(campaign_ids)
-    return JobResponse(job_id=task.id)
+    _tombstone_campaigns(campaign_ids)
+
+    try:
+        task = bulk_delete_campaigns.delay(campaign_ids)
+        job_id = task.id
+    except Exception:
+        logger.exception(
+            "[Campaign API] Failed to enqueue campaign delete for %s; "
+            "tombstones stand and the reconcile task will re-enqueue them.",
+            campaign_ids,
+        )
+        job_id = ""
+    return JobResponse(job_id=job_id)
 
 
 def _ensure_delete_confirmed(confirm: str) -> None:
@@ -1285,7 +1384,7 @@ def _list_campaign_docs(
         order_by="created_at",
         direction="DESCENDING",
     )
-    docs = [doc for doc in docs if doc.get("status") != "archived"]
+    docs = [doc for doc in docs if doc.get("status") not in ("archived", CampaignStatus.deleting.value)]
 
     if not status_filter:
         return docs

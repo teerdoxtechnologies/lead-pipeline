@@ -15,6 +15,12 @@ else
   exit 1
 fi
 
+# Beat runs the periodic reconcile task that re-enqueues stuck campaign
+# deletions (see beat_schedule in app/workers/celery_app.py).
+celery -A app.workers.celery_app:celery_app beat \
+  --loglevel=info \
+  --logfile=logs/celery-beat.log &
+
 celery -A app.workers.celery_app:celery_app worker \
   --loglevel=info \
   --pool=solo \

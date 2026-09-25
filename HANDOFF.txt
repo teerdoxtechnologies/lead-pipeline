@@ -452,6 +452,61 @@ Gmail draft cleanup:
 Gmail draft deletion on campaign delete is optional via
 GMAIL_DELETE_DRAFTS_ON_CAMPAIGN_DELETE.
 
+Tombstone-first delete flow (2026-09-25):
+POST /campaigns/delete no longer just queues work. Order:
+  1. Confirm token check (DELETE_CAMPAIGNS, unchanged: that is still the API
+     contract even though the UI asks the user to type the campaign name).
+  2. _tombstone_campaigns(ids): a Firestore TRANSACTION that re-reads the
+     running/analyzing guard from the same snapshot it writes, then sets
+     status=deleting + deleted_at + requeue_at (now + 10 min). 409 if any
+     target is running/analyzing. This guard now also applies to scope=all
+     (previously scope=all only got it inside the task).
+  3. bulk_delete_campaigns.delay(ids) with the materialised id list. If
+     enqueue throws, the tombstones stand: log it, return job_id="", and the
+     reconcile task re-enqueues later.
+Why: rows disappear from every read immediately (the UI refetches right
+after queueing), the delete intent survives crashes, and the transaction
+closes the start-vs-delete race.
+Where tombstones are hidden:
+- _list_campaign_docs filters status=deleting next to the pre-existing
+  "archived" filter, BEFORE the status-filter logic, so ?status=deleting
+  returns []. Every UI surface reads GET /api/campaigns (home funnel,
+  campaigns list, exports picker, campaign dropdowns), so one filter covers
+  them all.
+- build_campaigns_zip_for_ids excludes deleting from all-campaigns exports.
+- _ensure_campaign_can_run refuses status=deleting with 409 "Campaign is
+  being deleted." so nothing can resurrect a tombstone by starting it.
+Worker behaviour (unchanged code, now load-bearing):
+- _delete_campaign_doc deletes children first and the campaign doc LAST, so
+  a mid-purge failure leaves the tombstone in place (still hidden, retried).
+- _bulk_campaign_action counts per-campaign failures instead of raising;
+  failed campaigns keep status=deleting and get retried by reconciliation.
+- task_acks_late=True (celery_app.py), so a worker crash redelivers the task.
+Reconciliation (the cleanup guarantee):
+- New task tasks.reconcile_deleting_campaigns (app/workers/tasks.py):
+  queries status=deleting, picks docs whose requeue_at has passed
+  (_stale_deleting_ids helper), stamps requeue_at +10 min, then re-enqueues
+  bulk_delete_campaigns. The purge is idempotent, so duplicate enqueues are
+  harmless. Covers: crash between tombstone and .delay(), broker outage,
+  lost/expired task records, and failed purges.
+- Driven by celery beat: beat_schedule in app/workers/celery_app.py runs it
+  every 300s. scripts/start-worker.sh now starts beat alongside the worker
+  (logs/celery-beat.log). RESTART THE WORKER after pulling this change,
+  otherwise neither the new task nor beat is running.
+- Beat schedule file celerybeat-schedule* is gitignored (backend/.gitignore).
+Known limits:
+- Direct URLs to a tombstoned campaign (GET /campaigns/{id}/status) still
+  resolve until the purge lands; the lists never show it.
+- GET /leads/{id} still resolves briefly for leads of a deleting campaign.
+- If the worker is down for a long time, rows stay hidden until it returns.
+  Per the user, cleanup correctness beats UI feedback here.
+Tests: tests/test_delete_flow.py (14 tests: list exclusion, start guard,
+stale-tombstone selection). Full suite: python -m unittest discover -s tests.
+Pre-existing unrelated failure on this machine:
+test_campaign_helpers.test_sent_follow_up_updates_schedule_next_due_date
+(the test does not patch get_settings; it expects
+outreach_follow_up_interval_days=4 but config.py defaults to 3).
+
 Run commands
 ------------
 WSL/Linux venv activation:
@@ -464,6 +519,7 @@ Start Redis:
 
 Start Celery from project root:
 ./scripts/start-worker.sh
+(this now also starts celery beat for periodic reconcile tasks)
 
 Start FastAPI/docs:
 ./scripts/start-api.sh
@@ -484,6 +540,7 @@ Logs
 ----
 Celery logs are expected at:
 logs/celery.log
+logs/celery-beat.log (celery beat, started by start-worker.sh)
 
 Useful searches:
 rg -n "campaign_id_here|search_evidence|Search evidence|Notion|SerpAPI|serpapi|search_evidence_synced" logs/celery.log
@@ -2269,9 +2326,12 @@ o_website follow-ups now use the new preview-specific subject/body pair for oll
     from frontend/src/lib/api.ts (the backend endpoint still exists).
     NOTE: the payload still sends confirm: 'DELETE_CAMPAIGNS' - that is the
     server contract (_ensure_delete_confirmed in app/routes/scrape.py); the
-    campaign-name gate is client-side UX only. Server 4xx (blocked/confirm)
-    surfaces in the dialog's .err slot. On success: trackJob + toast, page
-    clears selection and invalidates.
+    campaign-name gate is client-side UX only. The server tombstones first
+    (status=deleting, rows hidden immediately) before the background purge;
+    see the "Tombstone-first delete flow" entry in the Campaign cleanup
+    section. Server 4xx (blocked/confirm) surfaces in the dialog's .err
+    slot. On success: trackJob + toast, page clears selection and
+    invalidates.
     Verified: dialog opens in ~0.2s (was 27s), warning glyph + red top edge
     render, 0 cleanup-preview requests, exact-name gate works for 1 and 2
     campaigns, 0 console errors.

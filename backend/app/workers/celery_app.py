@@ -48,6 +48,13 @@ def create_celery_app() -> Celery:
                 "routing_key": "default",
             }
         },
+        # Periodic tasks (run by `celery beat`, see scripts/start-worker.sh)
+        beat_schedule={
+            "reconcile-deleting-campaigns": {
+                "task": "tasks.reconcile_deleting_campaigns",
+                "schedule": 300.0,  # seconds
+            },
+        },
     )
 
     return app

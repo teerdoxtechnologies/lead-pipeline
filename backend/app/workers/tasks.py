@@ -4865,4 +4865,47 @@ def bulk_delete_campaigns(self, campaign_ids: Optional[List[str]] = None) -> Dic
     return {"status": "completed", **result}
 
 
+@celery_app.task(
+    name="tasks.reconcile_deleting_campaigns",
+    bind=True,
+    max_retries=0,
+    soft_time_limit=120,
+)
+def reconcile_deleting_campaigns(self) -> Dict[str, Any]:
+    """Re-enqueue tombstoned campaigns whose purge never completed.
+
+    Covers the gaps the delete API cannot: crash or broker failure between
+    the tombstone and .delay(), lost or expired task records, and purges that
+    failed partway (a failed campaign keeps its tombstone because the
+    campaign doc is deleted last). bulk_delete_campaigns is idempotent, so
+    re-running over a purge that is still in flight is harmless. Scheduled
+    by celery beat (see app/workers/celery_app.py beat_schedule).
+    """
+    from app.routes.scrape import DELETING_REQUEUE_AFTER, _stale_deleting_ids
+    from app.schemas import CampaignStatus
+
+    docs = query_collection(
+        CAMPAIGNS,
+        filters=[("status", "==", CampaignStatus.deleting.value)],
+        limit=500,
+    )
+    now = datetime.now(timezone.utc)
+    stale = _stale_deleting_ids(docs, now)
+    payload: Dict[str, Any] = {
+        "status": "completed",
+        "action": "reconcile_deleting",
+        "requeued": len(stale),
+        "campaign_ids": stale,
+    }
+    if not stale:
+        return payload
+
+    requeue_at = now + DELETING_REQUEUE_AFTER
+    for campaign_id in stale:
+        update_document(CAMPAIGNS, campaign_id, {"requeue_at": requeue_at})
+    bulk_delete_campaigns.delay(stale)
+    logger.info("[Cleanup] Re-enqueued %d tombstoned campaign(s): %s", len(stale), stale)
+    return payload
+
+
 

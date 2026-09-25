@@ -20,3 +20,6 @@ playwright-report/
 
 # Playwright browser profile — machine-local, never commit
 user_data/
+
+# Celery beat schedule files (local)
+celerybeat-schedule*

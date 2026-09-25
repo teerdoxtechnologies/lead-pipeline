@@ -25,6 +25,9 @@ class CampaignStatus(str, Enum):
     completed = "completed"
     cancelled = "cancelled"
     failed = "failed"
+    # Tombstone: the campaign is marked for deletion and hidden from reads
+    # while the background purge runs. Never set outside the delete flow.
+    deleting = "deleting"
 
 
 class ScrapeStatus(str, Enum):

@@ -24,7 +24,7 @@ export default function ExportsPage() {
       const ids = campaignIds.split(',').map((s) => s.trim()).filter(Boolean);
       const r = await api.queueExport(ids.length ? ids : undefined);
       if (r?.job_id) trackJob(r.job_id, 'Export ZIP');
-      toast.success('Export queued — refresh status, then download the ZIP.');
+      toast.success('Export queued. Refresh the status below until it is ready, then download the ZIP.');
       setStatus(await api.exportStatus(r.export_id));
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));

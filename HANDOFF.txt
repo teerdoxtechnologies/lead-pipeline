@@ -2266,6 +2266,17 @@ o_website follow-ups now use the new preview-specific subject/body pair for oll
   toast.error = red, toast.warning = amber, toast.info = blue. Use
   toast.warning for validation/gates and toast.info for non-outcomes; do not
   use toast.success for a "you must do X first" message.
+- Toast copy (user rule, swept 2026-09-25): a success toast gives the event
+  AND the next step, not a bare fragment. Patterns in use:
+    '<action> started. Follow it in Jobs below.'
+    'Campaign "X" created. Open it and press Run full to start scraping.'
+    'Due follow-ups queued. You will get a toast when they finish.'
+    'Export queued. Refresh the status below until it is ready, then
+     download the ZIP.'
+  Swept: CampaignsPage, CampaignDetailPage, LeadPage, OutreachPage,
+  OutreachDetailPage, ExportsPage, EditContactDialog, DeleteCampaignsDialog.
+  JobWatcher's own toasts were left untouched (deferred with the rest of the
+  em-dash sweep).
 - Sidebar: the Campaigns NavLink is active for BOTH /campaigns* and /leads*
   (lead pages are campaign-scoped), see App.tsx campaignsSection.
 - Sidebar is collapsible: the toggle button flips App.tsx state

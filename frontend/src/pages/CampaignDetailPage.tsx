@@ -97,7 +97,7 @@ export default function CampaignDetailPage() {
       setLastJobId(data.job_id);
       trackJob(data.job_id, `${action} · ${campaign?.name ?? id}`);
     }
-    toast.success('Job queued — see Jobs below for live state.');
+    toast.success(`${action} started. Follow it in Jobs below.`);
     invalidate();
   };
 
@@ -165,7 +165,7 @@ export default function CampaignDetailPage() {
       setCleanResult(r);
       if (!dryRun) {
         toast.success(
-          `Cleanup done — ${num(r.removed)} removed, ${num(r.failed)} failed.`,
+          `Cleanup finished. ${num(r.removed)} removed, ${num(r.failed)} failed.`,
         );
         invalidate();
       }

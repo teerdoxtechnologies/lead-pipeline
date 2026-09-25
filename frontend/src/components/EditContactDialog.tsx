@@ -58,7 +58,7 @@ export default function EditContactDialog({
         address: address.trim() || null,
         website: website.trim() || null,
       });
-      toast.success('Contact updated — synced to Notion.');
+      toast.success('Contact updated and synced to Notion.');
       onSaved();
       onClose();
     } catch (e) {

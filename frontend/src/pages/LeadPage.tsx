@@ -74,7 +74,11 @@ export default function LeadPage() {
   const flagMut = useMutation({
     mutationFn: (value: boolean) => api.updateLead(leadId, { needs_website: value }),
     onSuccess: (_d, value) => {
-      toast.success(value ? 'Marked for a website build — synced to Notion.' : 'Unmarked — excluded from website builds.');
+      toast.success(
+        value
+          ? 'Marked for a website build and synced to Notion.'
+          : 'Unmarked. This lead will be excluded from website builds.',
+      );
       invalidate();
     },
     onError: onErr,
@@ -84,7 +88,7 @@ export default function LeadPage() {
       setLastJobId(data.job_id);
       trackJob(data.job_id, `${action} · ${str(lead?.business_name) || leadId}`);
     }
-    toast.success('Job queued — see Jobs below for live state.');
+    toast.success(`${action} started. Follow it in Jobs below.`);
     invalidate();
   };
 
@@ -96,7 +100,7 @@ export default function LeadPage() {
   const regenReportMut = useMutation({
     mutationFn: (slug: string) => api.regenerateReport(slug),
     onSuccess: () => {
-      toast.success('Report regenerated — refreshed scores and findings.');
+      toast.success('Report regenerated. Scores and findings updated below.');
       invalidate();
     },
     onError: onErr,
@@ -133,8 +137,8 @@ export default function LeadPage() {
       const updated = await api.markSent(oid, platform);
       toast.success(
         updated.follow_up_due_at
-          ? `Sent ${String(pending.stage ?? 'initial').replace(/_/g, ' ')} — follow-up due ${relTime(updated.follow_up_due_at)}.`
-          : `Sent ${String(pending.stage ?? 'initial').replace(/_/g, ' ')} — no further follow-ups scheduled.`,
+          ? `Sent ${String(pending.stage ?? 'initial').replace(/_/g, ' ')}. Follow-up due ${relTime(updated.follow_up_due_at)}.`
+          : `Sent ${String(pending.stage ?? 'initial').replace(/_/g, ' ')}. No further follow-ups scheduled.`,
       );
       setPending(null);
       invalidate();

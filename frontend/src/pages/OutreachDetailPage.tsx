@@ -70,8 +70,8 @@ export default function OutreachDetailPage() {
       const updated = await api.markSent(draftId, platform);
       toast.success(
         updated.follow_up_due_at
-          ? `Sent ${String(d.stage ?? 'initial').replace(/_/g, ' ')} — follow-up due ${relTime(updated.follow_up_due_at)}.`
-          : `Sent ${String(d.stage ?? 'initial').replace(/_/g, ' ')} — no further follow-ups scheduled.`,
+          ? `Sent ${String(d.stage ?? 'initial').replace(/_/g, ' ')}. Follow-up due ${relTime(updated.follow_up_due_at)}.`
+          : `Sent ${String(d.stage ?? 'initial').replace(/_/g, ' ')}. No further follow-ups scheduled.`,
       );
       setPending(false);
       qc.invalidateQueries({ queryKey: ['draft', draftId] });
@@ -88,7 +88,7 @@ export default function OutreachDetailPage() {
     try {
       const job = await api.dueFollowUps(d?.campaign_id ?? undefined, 10, d?.lead_id ? [d.lead_id] : undefined);
       if (job?.job_id) trackJob(job.job_id, `Follow-up · ${String(d?.subject ?? draftId).slice(0, 40)}`);
-      toast.success('Queued follow-up generation for this lead.');
+      toast.success('Follow-up queued for this lead. You will get a toast when it finishes.');
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e));
     }

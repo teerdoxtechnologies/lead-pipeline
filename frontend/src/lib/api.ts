@@ -1,5 +1,14 @@
 const BASE = '';
 
+function apiErrorDetail(text: string): string | null {
+  try {
+    const detail = (JSON.parse(text) as { detail?: unknown }).detail;
+    return typeof detail === 'string' && detail ? detail : null;
+  } catch {
+    return null;
+  }
+}
+
 function repairQuery(params?: RepairMapsDataParams): string {
   if (!params) return '';
   const qs = new URLSearchParams();
@@ -18,6 +27,8 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
   });
   if (!res.ok) {
     const text = await res.text().catch(() => '');
+    const detail = apiErrorDetail(text);
+    if (detail) throw new Error(detail);
     throw new Error(`${res.status} ${res.statusText}${text ? ` — ${text.slice(0, 300)}` : ''}`);
   }
   const ct = res.headers.get('content-type') ?? '';

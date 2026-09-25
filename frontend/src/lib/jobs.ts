@@ -7,6 +7,8 @@ export interface TrackedJob {
   trackedAt: number;
   /** True for entries restored from storage (already-terminal ones drop silently). */
   rehydrated?: boolean;
+  /** True to poll without any completion toasts (fire-and-forget from the user's view). */
+  silent?: boolean;
 }
 
 const MAX_TRACKED = 10;
@@ -21,10 +23,12 @@ function persist() {
   try {
     localStorage.setItem(
       STORAGE_KEY,
-      JSON.stringify(jobs.map((j) => ({ jobId: j.jobId, label: j.label, trackedAt: j.trackedAt }))),
+      JSON.stringify(
+        jobs.map((j) => ({ jobId: j.jobId, label: j.label, trackedAt: j.trackedAt, silent: j.silent ?? false })),
+      ),
     );
   } catch {
-    /* storage unavailable (private mode) — tracking simply stays memory-only */
+    /* storage unavailable (private mode): tracking simply stays memory-only */
   }
 }
 
@@ -32,7 +36,7 @@ function rehydrate(): TrackedJob[] {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return [];
-    const parsed = JSON.parse(raw) as { jobId?: string; label?: string; trackedAt?: number }[];
+    const parsed = JSON.parse(raw) as { jobId?: string; label?: string; trackedAt?: number; silent?: boolean }[];
     if (!Array.isArray(parsed)) return [];
     const now = Date.now();
     return parsed
@@ -49,6 +53,7 @@ function rehydrate(): TrackedJob[] {
         label: typeof e.label === 'string' && e.label ? e.label : 'Background job',
         trackedAt: Number(e.trackedAt),
         rehydrated: true as const,
+        silent: e.silent === true,
       }));
   } catch {
     return [];
@@ -73,12 +78,13 @@ function emit() {
  * on terminal state. Deduplicated by job_id, capped, and persisted so jobs
  * still running across a reload keep reporting. Entries already terminal on
  * first sight after a reload are dropped silently (that news is stale).
+ * Pass { silent: true } to poll without any completion toasts.
  */
-export function trackJob(jobId: string, label: string) {
+export function trackJob(jobId: string, label: string, opts?: { silent?: boolean }) {
   ensureHydrated();
   const id = String(jobId || '').trim();
   if (!id) return;
-  jobs = [{ jobId: id, label, trackedAt: Date.now() }, ...jobs.filter((j) => j.jobId !== id)].slice(
+  jobs = [{ jobId: id, label, trackedAt: Date.now(), silent: opts?.silent === true }, ...jobs.filter((j) => j.jobId !== id)].slice(
     0,
     MAX_TRACKED,
   );

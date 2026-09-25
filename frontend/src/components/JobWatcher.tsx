@@ -31,7 +31,7 @@ function JobToast({ job }: { job: TrackedJob }) {
     if (q.isError) {
       fired.current = true;
       untrackJob(job.jobId);
-      if (!job.rehydrated) toast.error(`Lost track of ${job.label} — job record not found.`);
+      if (!job.rehydrated && !job.silent) toast.error(`Lost track of ${job.label}. Job record not found.`);
       return;
     }
     if (!data || isActiveJob(data.status)) {
@@ -52,16 +52,17 @@ function JobToast({ job }: { job: TrackedJob }) {
     qc.invalidateQueries({ queryKey: ['campaign-status'] });
     qc.invalidateQueries({ queryKey: ['leads'] });
     qc.invalidateQueries({ queryKey: ['drafts'] });
+    if (job.silent) return;
     const s = String(data.status ?? '');
     if (s === 'completed') {
-      toast.success(`${job.label} — done.`);
+      toast.success(`${job.label} finished.`);
     } else if (s === 'failed' || s === 'cancelled') {
       const why = resultError(data);
-      toast.error(why ? `${job.label} — ${s}: ${why}` : `${job.label} — ${s}.`);
+      toast.error(why ? `${job.label} ${s}: ${why}` : `${job.label} ${s}.`);
     } else {
-      toast.message(`${job.label} — finished (${s}).`);
+      toast.message(`${job.label} finished (${s}).`);
     }
-  }, [q.data, q.isError, job.jobId, job.label, job.rehydrated, qc]);
+  }, [q.data, q.isError, job.jobId, job.label, job.rehydrated, job.silent, qc]);
 
   return null;
 }

@@ -4,10 +4,9 @@ import { toast } from 'sonner';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, type Campaign, type Outreach } from '../lib/api';
 import { num, relTime } from '../lib/format';
-import { EmptyState, Section, SkeletonRows, StatCard, StatusPill } from '../components/ui';
+import { EmptyState, Section, SkeletonRows, StatusPill } from '../components/ui';
 import DeleteCampaignsDialog from '../components/DeleteCampaignsDialog';
 
-const ACTIVE = new Set(['pending', 'running', 'analyzing', 'scraped']);
 const NO_DRAFTS: Outreach[] = [];
 
 export default function CampaignsPage() {
@@ -36,22 +35,6 @@ export default function CampaignsPage() {
     }
     return m;
   }, [drafts]);
-
-  const overview = items.reduce(
-    (acc, c) => {
-      const m = c.stats?.maps;
-      return {
-        found: acc.found + (m?.businesses_found || 0),
-        withSite: acc.withSite + (m?.with_website || 0),
-        emailed: acc.emailed + (c.stats?.emailed || 0),
-        active: acc.active + (ACTIVE.has(c.status) ? 1 : 0),
-      };
-    },
-    { found: 0, withSite: 0, emailed: 0, active: 0 },
-  );
-  const convertedTotal = status
-    ? items.reduce((n, c) => n + (convertedByCampaign.get(c.id) ?? 0), 0)
-    : drafts.filter((d) => String(d.status ?? '') === 'converted').length;
 
   const createMut = useMutation({
     mutationFn: (body: { niche: string; location: string; website_filter: string }) => api.createCampaign(body),
@@ -144,14 +127,6 @@ export default function CampaignsPage() {
       </Section>
 
       {errMsg && <div className="err" role="alert">{errMsg}</div>}
-
-      <div className="stat-grid" role="group" aria-label="Campaign totals">
-        <StatCard label="Campaigns" value={num(items.length)} hint={`${overview.active} active`} />
-        <StatCard label="Leads found" value={num(overview.found)} hint="across listed campaigns" tone="accent" />
-        <StatCard label="With website" value={num(overview.withSite)} hint="eligible for audits" tone="info" />
-        <StatCard label="Emailed" value={num(overview.emailed)} hint="outreach delivered" tone="ok" />
-        <StatCard label="Converted" value={draftsQ.isLoading ? '…' : num(convertedTotal)} hint="clients won" tone="ok" />
-      </div>
 
       <Section
         title="All campaigns"

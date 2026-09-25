@@ -2229,8 +2229,10 @@ o_website follow-ups now use the new preview-specific subject/body pair for oll
   counts only.
 - Standing user rule (no em dashes): NEVER use an em dash (U+2014) in any
   writing going forward: UI copy, code comments, handoff notes, chat replies.
-  Use periods, commas, or colons instead. Pre-existing em dashes in older
-  files stay put unless the user asks for a sweep.
+  Use periods, commas, or colons instead. When a fix touches a file,
+  remove any em dashes encountered there (opportunistic cleanup, incl.
+  JobWatcher toasts cleaned 2026-09-26). A bulk sweep of untouched
+  older files still waits on explicit request.
 
 
 2026-09-23..25 frontend work (the whole batch is committed through 827539f):
@@ -2332,8 +2334,7 @@ o_website follow-ups now use the new preview-specific subject/body pair for oll
      download the ZIP.'
   Swept: CampaignsPage, CampaignDetailPage, LeadPage, OutreachPage,
   OutreachDetailPage, ExportsPage, EditContactDialog, DeleteCampaignsDialog.
-  JobWatcher's own toasts were left untouched (deferred with the rest of the
-  em-dash sweep).
+  JobWatcher's own toasts were cleaned later (opportunistic rule).
 - Sidebar: the Campaigns NavLink is active for BOTH /campaigns* and /leads*
   (lead pages are campaign-scoped), see App.tsx campaignsSection.
 - Sidebar is collapsible: the toggle button flips App.tsx state
@@ -2406,8 +2407,13 @@ o_website follow-ups now use the new preview-specific subject/body pair for oll
     (status=deleting, rows hidden immediately) before the background purge;
     see the "Tombstone-first delete flow" entry in the Campaign cleanup
     section. Server 4xx (blocked/confirm) surfaces in the dialog's .err
-    slot. On success: trackJob + toast, page clears selection and
-    invalidates.
+    slot. On success the toast states the deletion as fact with names
+    (single: Campaign "X" deleted.; N>1: N campaigns deleted: A, B.),
+    never mentioning the queue; the tracked job is silent
+    (trackJob { silent: true }, no completion toasts from JobWatcher,
+    polling and invalidation continue). Rows vanish immediately via
+    the tombstone, so the wording is true in the UI: page clears
+    selection and invalidates.
     Verified: dialog opens in ~0.2s (was 27s), warning glyph + red top edge
     render, 0 cleanup-preview requests, exact-name gate works for 1 and 2
     campaigns, 0 console errors.

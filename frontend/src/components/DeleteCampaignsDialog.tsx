@@ -44,8 +44,10 @@ export default function DeleteCampaignsDialog({
     setErr('');
     try {
       const job = await api.deleteCampaigns('selected', campaigns.map((c) => String(c.id)));
-      if (job?.job_id) trackJob(job.job_id, `Delete ${n} campaign${n === 1 ? '' : 's'}`);
-      toast.success('Delete queued. Campaigns disappear as the job finishes.');
+      if (job?.job_id) trackJob(job.job_id, `Delete ${n} campaign${n === 1 ? '' : 's'}`, { silent: true });
+      toast.success(
+        n === 1 ? `Campaign “${names[0]}” deleted.` : `${n} campaigns deleted: ${names.join(', ')}.`,
+      );
       onDeleted();
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));

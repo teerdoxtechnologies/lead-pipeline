@@ -76,7 +76,7 @@ class CampaignCreate(BaseModel):
 
     niche: str = Field(..., min_length=1, max_length=100)
     location: str = Field(..., min_length=1, max_length=200)
-    max_results: Optional[int] = Field(default=None, ge=1, le=500)
+    max_results: Optional[int] = Field(default=None, ge=1, le=1000)
     dedupe_enabled: Optional[bool] = None
     listing_media_enabled: Optional[bool] = None
     website_filter: Optional[Literal["no_website", "with_website", "all"]] = None

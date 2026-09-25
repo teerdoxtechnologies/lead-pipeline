@@ -78,7 +78,7 @@ class Settings(BaseSettings):
     playwright_headless: bool = True
 
     # Scraper limits
-    max_maps_results: int = 500
+    max_maps_results: int = 1000
     scrape_delay_min: int = 2
     scrape_delay_max: int = 5
     website_filter_default: str = "no_website"

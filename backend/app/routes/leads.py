@@ -132,13 +132,13 @@ async def get_lead(lead_id: str):
 @router.patch(
     "/leads/{lead_id}",
     response_model=LeadResponse,
-    summary="Manually edit a lead (needs_website flag and emails only)",
+    summary="Manually edit a lead (contact fields and build flag)",
 )
 async def update_lead(lead_id: str, body: LeadUpdateRequest):
     """
-    Dashboard edits for the two fields that gate website builds. Anything
-    else in the body is ignored. Pushes the change to Notion so the next
-    pull cannot revert it.
+    Dashboard edits for contact fields that gate website builds and for
+    manual corrections after Maps review. Pushes the change to Notion so
+    the next pull cannot revert it.
     """
     doc = get_document(LEADS, lead_id)
     if doc is None:
@@ -170,11 +170,26 @@ async def update_lead(lead_id: str, body: LeadUpdateRequest):
             )
         payload["emails"] = cleaned
         payload["has_email"] = bool(cleaned)
+    if body.phone is not None:
+        phone = str(body.phone or "").strip()
+        payload["phone"] = phone or None
+    if body.address is not None:
+        address = str(body.address or "").strip()
+        payload["address"] = address or None
+    if body.website is not None:
+        website = str(body.website or "").strip()
+        if website and not website.lower().startswith(("http://", "https://")):
+            website = "https://" + website
+        payload["website"] = website or None
+        # keep has_website / missing_website in sync for filters
+        has_site = bool(website)
+        payload["has_website"] = has_site
+        payload["missing_website"] = not has_site
 
     if not payload:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Nothing to update: send needs_website and/or emails.",
+            detail="Nothing to update: send needs_website, emails, phone, address, or website.",
         )
 
     update_document(LEADS, lead_id, payload)

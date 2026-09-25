@@ -50,7 +50,7 @@ export const api = {
     return req<Lead[]>(`/api/campaigns/${campaignId}/leads?${q.toString()}`);
   },
   lead: (leadId: string) => req<LeadDetail>(`/api/leads/${leadId}`),
-  updateLead: (leadId: string, body: { needs_website?: boolean; emails?: string[] }) =>
+  updateLead: (leadId: string, body: { needs_website?: boolean; emails?: string[]; phone?: string | null; address?: string | null; website?: string | null }) =>
     req<Lead>(`/api/leads/${leadId}`, { method: 'PATCH', body: JSON.stringify(body) }),
   leadDiagnostics: (leadId: string) => req<LeadDiagnostics>(`/api/leads/${leadId}/diagnostics`),
   websitePreview: (leadId: string) => req<{ preview_url: string }>(`/api/leads/${leadId}/website-preview`),

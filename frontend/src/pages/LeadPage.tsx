@@ -1,9 +1,11 @@
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { api, type Outreach } from '../lib/api';
 import ConfirmSendDialog from '../components/ConfirmSendDialog';
+import EditContactDialog from '../components/EditContactDialog';
+import { trackJob } from '../lib/jobs';
 import { useSiteUrls } from '../lib/site';
 import { fmtDate, isActiveJob, relTime } from '../lib/format';
 import { isSent, leadPipeline, outreachFor } from '../lib/leadStage';
@@ -25,10 +27,9 @@ export default function LeadPage() {
   const qc = useQueryClient();
   const [lastJobId, setLastJobId] = useState('');
   const [platform, setPlatform] = useState('gmail');
-  const [msg, setMsg] = useState('');
   const [pending, setPending] = useState<Outreach | null>(null);
   const [sending, setSending] = useState(false);
-  const [newEmail, setNewEmail] = useState('');
+  const [editContactOpen, setEditContactOpen] = useState(false);
 
   const leadQ = useQuery({ queryKey: ['lead', leadId], queryFn: () => api.lead(leadId) });
   const diagQ = useQuery({ queryKey: ['lead-diag', leadId], queryFn: () => api.leadDiagnostics(leadId) });
@@ -74,43 +75,22 @@ export default function LeadPage() {
     mutationFn: (value: boolean) => api.updateLead(leadId, { needs_website: value }),
     onSuccess: (_d, value) => {
       toast.success(value ? 'Marked for a website build — synced to Notion.' : 'Unmarked — excluded from website builds.');
-      setNewEmail('');
       invalidate();
     },
     onError: onErr,
   });
-  const emailsMut = useMutation({
-    mutationFn: (emails: string[]) => api.updateLead(leadId, { emails }),
-    onSuccess: () => {
-      toast.success('Emails saved — synced to Notion.');
-      setNewEmail('');
-      invalidate();
-    },
-    onError: onErr,
-  });
-
-  function addEmail(address: string) {
-    const current = lead?.emails ?? [];
-    if (current.some((e) => e.toLowerCase() === address.toLowerCase())) {
-      toast.error('That email is already on this lead.');
-      return;
+  const onJob = (data: { job_id?: string }, action: string) => {
+    if (data?.job_id) {
+      setLastJobId(data.job_id);
+      trackJob(data.job_id, `${action} · ${str(lead?.business_name) || leadId}`);
     }
-    emailsMut.mutate([...current, address]);
-  }
-
-  function removeEmail(address: string) {
-    emailsMut.mutate((lead?.emails ?? []).filter((e) => e !== address));
-  }
-  const onJob = (data: { job_id?: string }) => {
-    if (data?.job_id) setLastJobId(data.job_id);
-    setMsg('Job queued — see Jobs below for live state.');
+    toast.success('Job queued — see Jobs below for live state.');
     invalidate();
   };
-  const onDone = (m: string) => { setMsg(m); invalidate(); };
 
   const auditMut = useMutation({
     mutationFn: () => api.auditWebsites(campaignId, { lead_ids: [leadId] }),
-    onSuccess: () => onDone('Audit queued for this lead — a fresh report lands in the audit section.'),
+    onSuccess: (d) => onJob(d, 'Run audit'),
     onError: onErr,
   });
   const regenReportMut = useMutation({
@@ -123,19 +103,19 @@ export default function LeadPage() {
   });
   const buildMut = useMutation({
     mutationFn: () => api.buildWebsites(campaignId, [leadId]),
-    onSuccess: onJob, onError: onErr,
+    onSuccess: (d) => onJob(d, 'Build preview'), onError: onErr,
   });
   const publishMut = useMutation({
     mutationFn: () => api.publishWebsites(campaignId, [leadId]),
-    onSuccess: onJob, onError: onErr,
+    onSuccess: (d) => onJob(d, 'Publish site'), onError: onErr,
   });
   const processMut = useMutation({
     mutationFn: () => api.processWebsiteLeads(campaignId, [leadId]),
-    onSuccess: onJob, onError: onErr,
+    onSuccess: (d) => onJob(d, 'Audit + outreach'), onError: onErr,
   });
   const followMut = useMutation({
     mutationFn: () => api.dueFollowUps(campaignId || undefined, 10, [leadId]),
-    onSuccess: onJob, onError: onErr,
+    onSuccess: (d) => onJob(d, 'Queue follow-up'), onError: onErr,
   });
 
   const jobQ = useQuery({
@@ -149,7 +129,6 @@ export default function LeadPage() {
     const oid = pending ? String(pending.id ?? pending.outreach_id ?? '') : '';
     if (!pending || !oid) return;
     setSending(true);
-    setMsg('');
     try {
       const updated = await api.markSent(oid, platform);
       toast.success(
@@ -256,7 +235,6 @@ export default function LeadPage() {
       </div>
 
       {err && <div className="err" role="alert">{err}</div>}
-      {msg && <div className="ok-msg" role="status">{msg}</div>}
       {pending && (
         <ConfirmSendDialog
           draft={pending}
@@ -264,6 +242,13 @@ export default function LeadPage() {
           busy={sending}
           onConfirm={confirmSend}
           onClose={() => { if (!sending) setPending(null); }}
+        />
+      )}
+      {editContactOpen && lead && (
+        <EditContactDialog
+          lead={lead}
+          onClose={() => setEditContactOpen(false)}
+          onSaved={() => invalidate()}
         />
       )}
 
@@ -276,52 +261,23 @@ export default function LeadPage() {
         </Section>
       )}
 
-      <Section title="Contact and Maps" hint="How to reach them and what the Maps scrape captured.">
+      <Section
+        title="Contact and Maps"
+        hint="How to reach them and what the Maps scrape captured."
+        action={
+          <button className="ghost btn-sm" onClick={() => setEditContactOpen(true)} disabled={!lead}>
+            Edit contact
+          </button>
+        }
+      >
         {leadQ.isLoading ? <p className="muted small">Loading…</p> : lead ? (
           <Fields>
             <Field label="Emails">
               {(lead.emails?.length ?? 0) > 0 ? (
-                <span>
-                  {lead.emails!.map((e) => (
-                    <span key={e} className="row tight" style={{ display: 'inline-flex', marginRight: 12 }}>
-                      <a href={`mailto:${e}`}>{e}</a>
-                      <button
-                        className="ghost btn-sm"
-                        style={{ minHeight: 26, padding: '1px 8px' }}
-                        onClick={() => removeEmail(e)}
-                        disabled={emailsMut.isPending}
-                        aria-label={`Remove ${e}`}
-                        title="Remove this email address"
-                      >
-                        ×
-                      </button>
-                    </span>
-                  ))}
-                </span>
+                <span>{lead.emails!.map((e) => <a key={e} href={`mailto:${e}`}>{e}</a>).reduce<ReactNode[]>((acc, el, i) => (i ? [...acc, ', ', el] : [el]), [])}</span>
               ) : (
-                <span><StatusPill status="missing email" tone="warn" /> <span className="faint small">add one before building a site</span></span>
+                <span><StatusPill status="missing email" tone="warn" /> <span className="faint small">add via Edit contact</span></span>
               )}
-              <form
-                className="row tight"
-                style={{ marginTop: 8 }}
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  if (newEmail.trim()) addEmail(newEmail.trim());
-                }}
-              >
-                <input
-                  aria-label="Add email address"
-                  placeholder="name@business.com"
-                  value={newEmail}
-                  onChange={(e) => setNewEmail(e.target.value)}
-                  style={{ minWidth: 220 }}
-                  type="email"
-                  required
-                />
-                <button type="submit" className="ghost btn-sm" disabled={emailsMut.isPending || !newEmail.trim()}>
-                  Add email
-                </button>
-              </form>
             </Field>
             <Field label="Phone">
               {lead.phone ? <a href={`tel:${lead.phone}`}>{lead.phone}</a> : <span className="faint">none</span>}

@@ -63,6 +63,9 @@ class LeadUpdateRequest(BaseModel):
 
     needs_website: Optional[bool] = None
     emails: Optional[List[str]] = None
+    phone: Optional[str] = None
+    address: Optional[str] = None
+    website: Optional[str] = None
 
 
 class CampaignCreate(BaseModel):

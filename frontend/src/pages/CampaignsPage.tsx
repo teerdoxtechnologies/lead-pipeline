@@ -12,7 +12,7 @@ const NO_DRAFTS: Outreach[] = [];
 
 export default function CampaignsPage() {
   const [status, setStatus] = useState('');
-  const [form, setForm] = useState({ niche: '', location: '' });
+  const [form, setForm] = useState({ niche: '', location: '', website_filter: 'no_website' });
   const [sel, setSel] = useState<string[]>([]);
   const [delOpen, setDelOpen] = useState(false);
   const qc = useQueryClient();
@@ -54,9 +54,9 @@ export default function CampaignsPage() {
     : drafts.filter((d) => String(d.status ?? '') === 'converted').length;
 
   const createMut = useMutation({
-    mutationFn: (body: { niche: string; location: string }) => api.createCampaign(body),
+    mutationFn: (body: { niche: string; location: string; website_filter: string }) => api.createCampaign(body),
     onSuccess: (c) => {
-      setForm({ niche: '', location: '' });
+      setForm({ niche: '', location: '', website_filter: 'no_website' });
       toast.success(`Campaign “${c.name}” created. Open it and press Run full to start scraping.`);
       qc.invalidateQueries({ queryKey: ['campaigns'] });
     },
@@ -127,6 +127,15 @@ export default function CampaignsPage() {
             Location
             <input placeholder="e.g. atlanta" value={form.location}
               onChange={(e) => setForm({ ...form, location: e.target.value })} required />
+          </label>
+          <label>
+            Website filter
+            <select value={form.website_filter}
+              onChange={(e) => setForm({ ...form, website_filter: e.target.value })}>
+              <option value="no_website">No website only</option>
+              <option value="with_website">With website only</option>
+              <option value="all">All listings</option>
+            </select>
           </label>
           <button type="submit" disabled={createMut.isPending}>
             {createMut.isPending ? 'Creating…' : 'Create'}

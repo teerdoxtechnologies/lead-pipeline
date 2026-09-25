@@ -81,6 +81,7 @@ class Settings(BaseSettings):
     max_maps_results: int = 500
     scrape_delay_min: int = 2
     scrape_delay_max: int = 5
+    website_filter_default: str = "no_website"
 
     # Local exports
     export_dir: str = "exports"

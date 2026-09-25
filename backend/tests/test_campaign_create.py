@@ -89,6 +89,35 @@ class CreateCampaignUniquenessTests(unittest.TestCase):
         self.assertEqual(out.name, "house-cleaners-new-york")
         self.assertEqual(out.status.value, "pending")
 
+    def test_stores_website_filter_in_scrape_settings(self):
+        body = CampaignCreate(
+            niche="cleaners", location="atlanta", website_filter="with_website"
+        )
+        notion = MagicMock()
+        notion.sync_campaign.return_value = None
+        with (
+            patch("app.routes.scrape.query_collection", return_value=[]),
+            patch("app.routes.scrape.get_db"),
+            patch(
+                "app.routes.scrape._insert_campaign_with_unique_name",
+                return_value="new-id",
+            ) as insert,
+            patch(
+                "app.routes.scrape.get_document",
+                return_value={
+                    "id": "new-id",
+                    "name": "cleaners-atlanta",
+                    "status": "pending",
+                },
+            ),
+            patch("app.routes.scrape.get_notion_sync", return_value=notion),
+        ):
+            _run(create_campaign(body))
+        data_arg = insert.call_args[0][1]
+        self.assertEqual(
+            data_arg["scrape_settings"]["website_filter"], "with_website"
+        )
+
 
 class _FakeSnapshot:
     def __init__(self, exists):

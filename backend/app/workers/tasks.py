@@ -590,11 +590,37 @@ def _campaign_scrape_settings(campaign: Dict[str, Any]) -> Dict[str, Any]:
         dedupe_enabled = settings.global_lead_dedupe_enabled
     if listing_media_enabled is None:
         listing_media_enabled = settings.maps_listing_media_enabled
+    website_filter = _resolve_website_filter(
+        scrape_settings.get("website_filter"),
+        getattr(settings, "website_filter_default", "no_website"),
+    )
     return {
         "max_results": int(max_results),
         "dedupe_enabled": bool(dedupe_enabled),
         "listing_media_enabled": bool(listing_media_enabled),
+        "website_filter": website_filter,
     }
+
+
+WEBSITE_FILTERS = ("no_website", "with_website", "all")
+
+
+def _resolve_website_filter(value: Any, default: str) -> str:
+    """Sanitize a stored website_filter value, falling back to default."""
+    if value in WEBSITE_FILTERS:
+        return value
+    if default in WEBSITE_FILTERS:
+        return default
+    return "no_website"
+
+
+def _website_allowed(has_website: bool, website_filter: str) -> bool:
+    """Whether a business passes the campaign's website filter."""
+    if website_filter == "with_website":
+        return has_website
+    if website_filter == "no_website":
+        return not has_website
+    return True
 
 
 def _get_campaign_search_evidence(
@@ -1293,6 +1319,7 @@ def _scrape_and_persist_maps_leads(
         campaign_id,
         businesses,
         dedupe_enabled=bool(dedupe_enabled),
+        website_filter=selected_settings["website_filter"],
     )
     maps_metrics.update(persist_metrics)
 
@@ -1932,11 +1959,14 @@ def _persist_raw_leads(
     campaign_id: str,
     businesses: List[Dict[str, Any]],
     dedupe_enabled: Optional[bool] = None,
+    website_filter: Optional[str] = None,
 ) -> tuple[List[str], Dict[str, Any]]:
     """
     Write raw business data as lead documents.
     Idempotent: if a lead for the same campaign + business_name already exists,
     it is reused (not duplicated).
+    Businesses excluded by the campaign's website filter are skipped before
+    any dedupe or document writes.
     """
     campaign = get_document(CAMPAIGNS, campaign_id) or {}
     campaign_notion_page_id = campaign.get("notion_page_id")
@@ -1958,6 +1988,10 @@ def _persist_raw_leads(
     settings = get_settings()
     if dedupe_enabled is None:
         dedupe_enabled = settings.global_lead_dedupe_enabled
+    website_filter = _resolve_website_filter(
+        website_filter,
+        getattr(settings, "website_filter_default", "no_website"),
+    )
     global_lead_index = (
         _build_global_lead_index()
         if dedupe_enabled
@@ -1968,6 +2002,7 @@ def _persist_raw_leads(
         "businesses_persisted": 0,
         "existing_leads_reused": 0,
         "global_duplicates_skipped": 0,
+        "website_filtered": 0,
         "missing_website": 0,
         "with_website": 0,
         "leads_validated": 0,
@@ -1975,6 +2010,7 @@ def _persist_raw_leads(
         "invalid_address_domains": 0,
         "parser_anomalies": 0,
         "dedupe_enabled": bool(dedupe_enabled),
+        "website_filter": website_filter,
     }
 
     db = get_db()
@@ -2002,6 +2038,9 @@ def _persist_raw_leads(
 
         website = biz.get("website")
         has_website = bool(website)
+        if not _website_allowed(has_website, website_filter):
+            persist_metrics["website_filtered"] += 1
+            continue
         dedupe_keys = _lead_dedupe_keys(
             business_name,
             phone=biz.get("phone"),

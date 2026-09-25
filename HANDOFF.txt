@@ -2266,6 +2266,17 @@ o_website follow-ups now use the new preview-specific subject/body pair for oll
   pre-existing rows that have no reservation. Deleting a campaign releases
   its reservation, freeing the name. Covered by
   backend/tests/test_campaign_create.py (9 tests).
+- Website filter (no-website focus): campaigns carry scrape_settings
+  .website_filter, one of no_website / with_website / all. CampaignCreate
+  accepts it (Literal, 422 otherwise); unset or garbage falls back to the
+  website_filter_default global ("no_website"). _persist_raw_leads drops
+  excluded businesses before dedupe or writes and counts website_filtered;
+  the resolved value is recorded in stats.maps. Pure pieces in
+  tasks.py (_resolve_website_filter, _website_allowed) are covered by
+  backend/tests/test_website_filter.py (12 tests). The create form has a
+  Website filter select defaulting to No website only. Note has_website is
+  a Maps heuristic (bool(website)), so some "no website" leads may turn
+  out to have sites; the repair/enrichment flag-flips still apply.
 - Lead page is the deepest surface: breadcrumbs (Campaigns / campaign /
   lead), six-step pipeline stepper, gated section-scoped actions, contact
   editor (EditContactDialog -> PATCH /leads), audit + no-website reports,

@@ -79,6 +79,7 @@ class CampaignCreate(BaseModel):
     max_results: Optional[int] = Field(default=None, ge=1, le=500)
     dedupe_enabled: Optional[bool] = None
     listing_media_enabled: Optional[bool] = None
+    website_filter: Optional[Literal["no_website", "with_website", "all"]] = None
 
 
 class CampaignStats(BaseModel):

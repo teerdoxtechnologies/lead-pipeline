@@ -20,7 +20,7 @@ export const api = {
   listCampaigns: (status?: string) =>
     req<Campaign[]>(`/api/campaigns${status ? `?status=${encodeURIComponent(status)}` : ''}`),
 
-  createCampaign: (body: { niche: string; location: string; max_results?: number; dedupe_enabled?: boolean }) =>
+  createCampaign: (body: { niche: string; location: string; max_results?: number; dedupe_enabled?: boolean; website_filter?: string }) =>
     req<Campaign>('/api/campaigns', { method: 'POST', body: JSON.stringify(body) }),
 
   campaignStatus: (id: string) => req<CampaignStatus>(`/api/campaigns/${id}/status`),

@@ -165,13 +165,14 @@ async def create_campaign(body: CampaignCreate):
             detail=f'Campaign "{name}" already exists.',
         )
     logger.info(
-        "[Campaign API] Creating campaign name=%s niche=%s location=%s max_results=%s dedupe=%s listing_media=%s",
+        "[Campaign API] Creating campaign name=%s niche=%s location=%s max_results=%s dedupe=%s listing_media=%s website_filter=%s",
         name,
         body.niche,
         body.location,
         body.max_results,
         body.dedupe_enabled,
         body.listing_media_enabled,
+        body.website_filter,
     )
     data = {
         "name": name,
@@ -193,6 +194,7 @@ async def create_campaign(body: CampaignCreate):
             "max_results": body.max_results,
             "dedupe_enabled": body.dedupe_enabled,
             "listing_media_enabled": body.listing_media_enabled,
+            "website_filter": body.website_filter,
         },
     }
     doc_id = _insert_campaign_with_unique_name(get_db().transaction(), data, name)

@@ -2293,6 +2293,15 @@ o_website follow-ups now use the new preview-specific subject/body pair for oll
   no_website/all. Missing or invalid stored filter falls back to
   no_website (same as backend).   StatusResponse gained website_filtered
   (flattened from stats.maps like the other maps counters).
+- Campaign detail gating vs polling are separate sets: RUNNING
+  (running|analyzing) gates Run full/Maps scrape/Resume and shows Stop;
+  LIVE (plus pending|scraped) drives status/leads polling only. Pending
+  and scraped campaigns used to count as running, which disabled the
+  start buttons and showed Stop on campaigns with nothing running.
+  Data-dependent buttons gate on data, not stage: Resume needs leads
+  (total > 0), Run audits needs with_website > 0, Regenerate drafts
+  needs existing drafts; each disabled title says why. Run full and
+  Maps scrape stay idle-gated; Stop stays running-only.
 - Maps-data repair selection is exposed via components
   /RepairMapsDataDialog.tsx on the campaign detail page (replaces the
   direct-queue button): lead IDs first (comma-separated, blank means

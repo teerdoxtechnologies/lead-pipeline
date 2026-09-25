@@ -11,7 +11,8 @@ import {
 } from '../components/ui';
 import RepairMapsDataDialog from '../components/RepairMapsDataDialog';
 
-const RUNNING = new Set(['running', 'analyzing', 'pending', 'scraped']);
+const RUNNING = new Set(['running', 'analyzing']);
+const LIVE = new Set(['running', 'analyzing', 'pending', 'scraped']);
 const PAGE_SIZE = 25;
 
 function draftsByLead(items: Outreach[]): Map<string, Outreach[]> {
@@ -48,11 +49,12 @@ export default function CampaignDetailPage() {
   });
   const campaign = listQ.data?.find((c) => c.id === id);
   const isRunning = !!campaign && RUNNING.has(campaign.status);
+  const isLive = !!campaign && LIVE.has(campaign.status);
 
   const statusQ = useQuery({
     queryKey: ['campaign-status', id],
     queryFn: () => api.campaignStatus(id),
-    refetchInterval: isRunning ? 5000 : false,
+    refetchInterval: isLive ? 5000 : false,
   });
 
   const leadsQ = useQuery({
@@ -65,7 +67,7 @@ export default function CampaignDetailPage() {
         has_website: siteFilter === 'own' ? true : siteFilter === 'needs' ? false : undefined,
         has_email: emailFilter === 'yes' ? true : emailFilter === 'no' ? false : undefined,
       }),
-    refetchInterval: isRunning ? 10_000 : false,
+    refetchInterval: isLive ? 10_000 : false,
   });
 
   const draftsQ = useQuery({
@@ -127,6 +129,9 @@ export default function CampaignDetailPage() {
   const rawFilter = campaign?.scrape_settings?.website_filter;
   const websiteFilter =
     rawFilter === 'with_website' || rawFilter === 'all' ? rawFilter : 'no_website';
+  const leadTotal = s?.total ?? 0;
+  const withSiteTotal = s?.with_website ?? 0;
+  const draftTotal = draftsQ.data?.length ?? 0;
   const job = jobQ.data;
   const draftMap = useMemo(() => draftsByLead(draftsQ.data ?? []), [draftsQ.data]);
   const candMap = useMemo(() => {
@@ -202,13 +207,13 @@ export default function CampaignDetailPage() {
           <button className="ghost" onClick={() => scrapeMut.mutate()} disabled={queueBusy || isRunning} title="Only re-runs the Google Maps scrape for new or missing leads.">
             Maps scrape
           </button>
-          <button className="ghost" onClick={() => resumeMut.mutate()} disabled={queueBusy || isRunning} title="Continues a paused or interrupted analysis run where it stopped.">
+          <button className="ghost" onClick={() => resumeMut.mutate()} disabled={queueBusy || isRunning || leadTotal === 0} title={leadTotal === 0 ? 'Nothing to resume yet. Run the scrape first.' : 'Continues a paused or interrupted analysis run where it stopped.'}>
             Resume analysis
           </button>
-          <button className="ghost" onClick={() => auditMut.mutate()} disabled={auditMut.isPending || queueBusy} title="Queues website audits for leads that have one. Watch progress in Jobs below.">
+          <button className="ghost" onClick={() => auditMut.mutate()} disabled={auditMut.isPending || queueBusy || withSiteTotal === 0} title={withSiteTotal === 0 ? 'No leads with websites yet. Audits need a site to check.' : 'Queues website audits for leads that have one. Watch progress in Jobs below.'}>
             Run audits
           </button>
-          <button className="ghost" onClick={() => regenMut.mutate()} disabled={regenMut.isPending || queueBusy} title="Rewrites existing outreach copy from the latest templates. Never changes outreach status.">
+          <button className="ghost" onClick={() => regenMut.mutate()} disabled={regenMut.isPending || queueBusy || draftTotal === 0} title={draftTotal === 0 ? 'No drafts yet. Generate drafts from the Repairs section first.' : 'Rewrites existing outreach copy from the latest templates. Never changes outreach status.'}>
             {regenMut.isPending ? 'Queued…' : 'Regenerate drafts'}
           </button>
           {isRunning && (
@@ -216,7 +221,7 @@ export default function CampaignDetailPage() {
               className="danger"
               onClick={() => cancelMut.mutate()}
               disabled={cancelMut.isPending}
-              title="Cancels the currently running pipeline job for this campaign. Use it when a run is stuck, wrong, or no longer wanted — completed work is kept."
+              title="Cancels the currently running pipeline job for this campaign. Use it when a run is stuck, wrong, or no longer wanted. Completed work is kept."
               aria-label="Stop the running pipeline job"
             >
               {cancelMut.isPending ? 'Stopping…' : 'Stop'}

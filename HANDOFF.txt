@@ -2170,6 +2170,10 @@ o_website follow-ups now use the new preview-specific subject/body pair for oll
   no "N is permanent" restatements when a confirmation dialog already says
   it. The user called this out on the campaigns bulk-delete bar. Labels and
   counts only.
+- Standing user rule (no em dashes): NEVER use an em dash (U+2014) in any
+  writing going forward: UI copy, code comments, handoff notes, chat replies.
+  Use periods, commas, or colons instead. Pre-existing em dashes in older
+  files stay put unless the user asks for a sweep.
 
 
 2026-09-23..25 frontend work (the whole batch is committed through 827539f):
@@ -2239,21 +2243,43 @@ o_website follow-ups now use the new preview-specific subject/body pair for oll
     Delete disabled; selecting flips the accent styling and enables them.
     Same 50px height in every state - verified the table never shifts
     (bar y524/h50, table y584/h227 across idle -> 1 selected -> idle).
-    Content: count + Clear + "Delete..." only (no hint text - the dialog
+    Content: count + Clear + "Delete" only (no hint text - the dialog
     already carries the permanence warning).
-  * Delete opens components/DeleteCampaignsDialog.tsx, which auto-fetches
-    api.cleanupPreview(ids) on mount (the old manual "Preview deletion"
-    button step is gone), renders the stat grid, blocks on running/analyzing
-    campaigns, and requires the exact DELETE_CAMPAIGNS text before the
-    danger button enables. It queues api.deleteCampaigns('selected', ids),
-    trackJob + toast, then the page clears selection and invalidates.
+  * Delete opens components/DeleteCampaignsDialog.tsx. It does NO network
+    fetch before confirming (the ~27s api.cleanupPreview stat-count step was
+    removed - user challenged why confirmation needed fetched counts, and it
+    bought nothing: statuses are already on the page and the server
+    re-validates). It follows the standard "delete warning" pattern seen on
+    major sites: .dialog-danger (red top edge) + warning-triangle glyph, with
+    the copy the user prescribed exactly:
+      H: "Are you sure you want to delete <campaign name>?"
+         (N>1: "Are you sure you want to delete these N campaigns?")
+      B: "This is an irreversible decision and will delete all records
+          associated with this campaign."
+      buttons: Cancel, "Yes, I'm sure"
+    A "Type <code>token</code> to confirm" label sits above a full-width
+    input (.confirm-label/.confirm-input). What gates the danger button:
+      - running/analyzing check computed LOCALLY from the selected rows'
+        status (BLOCKED = running|analyzing), rendered as an .err line;
+      - typing the campaign NAME(S) shown in the confirm label: single
+        campaign = its name (e.g. home-cleaning-atlanta), multiple = names
+        joined with ", "; input must match exactly.
+    Title shows the name for N=1, and N>1 lists names + StatusPill in
+    .dialog-list. api.cleanupPreview and the CleanupPreview type were DELETED
+    from frontend/src/lib/api.ts (the backend endpoint still exists).
+    NOTE: the payload still sends confirm: 'DELETE_CAMPAIGNS' - that is the
+    server contract (_ensure_delete_confirmed in app/routes/scrape.py); the
+    campaign-name gate is client-side UX only. Server 4xx (blocked/confirm)
+    surfaces in the dialog's .err slot. On success: trackJob + toast, page
+    clears selection and invalidates.
+    Verified: dialog opens in ~0.2s (was 27s), warning glyph + red top edge
+    render, 0 cleanup-preview requests, exact-name gate works for 1 and 2
+    campaigns, 0 console errors.
   * scope='all' was deliberately DROPPED from the UI (only "delete what you
     checked" remains); the backend endpoint still supports it, just unlinked.
-  * CSS: added .bulk-bar/.col-check/.table-wrap checkbox rules; removed the
-    now-unused .checklist rules (no type=radio inputs exist anywhere now).
-  * NOTE: cleanup preview for even ONE campaign takes ~27s (Firestore
-    aggregation + Notion counts) - the dialog just says "Scanning records..."
-    during it. Same backend cost as the old section, not a regression.
+  * CSS: added .bulk-bar/.col-check/.table-wrap/.dialog-list plus the danger
+    dialog set (.dialog-danger/.dialog-warn/.confirm-label/.confirm-input);
+    removed the now-unused .checklist rules (no type=radio inputs exist).
 - Headless verification scripts live in C:\Users\user\AppData\Local\Temp\
   opencode\ (check_nav.py, check_edit.py, ui_test.py, style_test.py) and are
   run with $env:PYTHONIOENCODING="utf-8"; python <script>. They drive a

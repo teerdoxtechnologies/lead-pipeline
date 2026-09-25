@@ -690,6 +690,33 @@ details.dump-wrap summary { cursor: pointer; font-weight: 600; font-size: 13.5px
   padding: 10px 12px;
 }
 .dialog-note { color: var(--muted); font-size: 13px; }
+.dialog-list {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 14px;
+}
+.dialog-list li { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
+/* Danger-confirmation dialog: red top edge, warning glyph, type-to-confirm. */
+.dialog-danger { border-top: 3px solid var(--danger-text); }
+.dialog-warn { display: flex; align-items: center; gap: 10px; }
+.dialog-warn svg { color: var(--danger-text); flex-shrink: 0; }
+.dialog-warn h2 { margin: 0; font-size: 17px; }
+.confirm-label { display: block; margin-top: 16px; font-size: 13px; color: var(--muted); }
+.confirm-label code {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 6px;
+  color: var(--text);
+  font-weight: 600;
+  font-size: 13px;
+}
+.confirm-input { width: 100%; margin-top: 6px; }
 
 
 .history { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }

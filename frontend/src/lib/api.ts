@@ -109,12 +109,6 @@ export const api = {
       body: JSON.stringify({ dry_run: false, all_emails: false, update_gmail_draft: true }),
     }),
 
-  cleanupPreview: (campaignIds?: string[]) => {
-    const q = new URLSearchParams();
-    for (const id of campaignIds ?? []) q.append('campaign_ids', id);
-    const s = q.toString();
-    return req<CleanupPreview>(`/api/campaigns/cleanup-preview${s ? `?${s}` : ''}`);
-  },
   deleteCampaigns: (scope: 'selected' | 'all', campaignIds?: string[]) =>
     req<Job>(`/api/campaigns/delete?scope=${scope}`, {
       method: 'POST',
@@ -318,20 +312,6 @@ export interface Outreach {
   notion_page_id?: string | null;
   created_at?: string | null;
   updated_at?: string | null;
-  [k: string]: unknown;
-}
-
-export interface CleanupPreview {
-  campaign_ids?: string[];
-  campaigns?: number;
-  mutable_campaigns?: number;
-  running_or_analyzing_campaigns?: number;
-  leads?: number;
-  audit_reports?: number;
-  no_website_reports?: number;
-  email_drafts?: number;
-  notion_pages?: number;
-  notion_pages_unknown?: boolean;
   [k: string]: unknown;
 }
 

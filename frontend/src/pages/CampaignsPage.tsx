@@ -247,7 +247,11 @@ export default function CampaignsPage() {
       </Section>
 
       {delOpen && sel.length > 0 && (
-        <DeleteCampaignsDialog campaignIds={sel} onClose={() => setDelOpen(false)} onDeleted={onDeleted} />
+        <DeleteCampaignsDialog
+          campaigns={items.filter((c) => sel.includes(c.id))}
+          onClose={() => setDelOpen(false)}
+          onDeleted={onDeleted}
+        />
       )}
     </div>
   );

@@ -2312,7 +2312,11 @@ o_website follow-ups now use the new preview-specific subject/body pair for oll
   Data-dependent buttons gate on data, not stage: Resume needs leads
   (total > 0), Run audits needs with_website > 0, Regenerate drafts
   needs existing drafts; each disabled title says why. Run full and
-  Maps scrape stay idle-gated; Stop stays running-only.
+  Maps scrape stay idle-gated; Stop stays running-only. Resume and
+  Run audits are hidden (not disabled) under the no_website filter:
+  analysis only ever skips there, and audits inspect existing sites
+  while the campaign builds sites instead. Per-lead audit on the lead
+  page stays for repair graduates.
 - Live run logs (user asked): worker buffers per-task log lines via
   app/workers/task_logs.py (root handler, throttled flush every 20
   lines/2s) to Redis lp:joblogs:{id} (7d TTL, best-effort, never
@@ -2366,6 +2370,22 @@ o_website follow-ups now use the new preview-specific subject/body pair for oll
   section has the danger button + DeleteLeadDialog (typed business-name
   gate); success toasts and routes to the campaign page. Covered by
   backend/tests/  test_lead_delete.py (10 tests).
+- Leads bulk bar (campaign detail Leads section, mirrors the campaigns
+  table pattern): checkbox column + header select-all-listed, fixed
+  bulk bar (count, Clear, Mark/Unmark for build, Build previews,
+  Publish). Selection resets on filter/search/page change; stale ids
+  from other campaigns filter out every render (activeSel). Mark is a
+  sync endpoint POST .../websites/mark (WebsiteMarkRequest; foreign
+  ids skipped with counts); build/publish queue tracked jobs.
+  Compliance guard: Build needs marked + email, Publish needs a
+  preview; violations fire a warning toast with defaulter counts per
+  reason and the fix (no names: the red cue marks the rows; no job
+  queued). Failing rows get a red checkbox cue
+  (.col-check.bad: danger accent + 2px outline, cleared on any
+  selection change or success).
+  LeadResponse carries needs_website +
+  generated slug/status for the guard. Covered by
+  backend/tests/test_websites_mark.py (4 tests).
 - The Saved card is gone from the campaign detail page: it displayed
   businesses_persisted, a per-run new-writes counter, mislabeled as
   inventory (a re-scrape that reuses everything resets it to 0; a

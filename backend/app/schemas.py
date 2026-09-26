@@ -166,6 +166,11 @@ class WebsiteCleanupRequest(BaseModel):
     sync_to_notion: bool = True
 
 
+class WebsiteMarkRequest(BaseModel):
+    lead_ids: List[str] = Field(default_factory=list, max_length=500)
+    needs_website: bool = True
+
+
 class OutreachDraftRequest(BaseModel):
     lead_ids: Optional[List[str]] = None
     batch_size: int = Field(default=25, ge=1, le=100)
@@ -386,6 +391,9 @@ class LeadResponse(BaseModel):
     has_website: bool = False
     missing_website: bool = False
     scrape_status: ScrapeStatus = ScrapeStatus.pending
+    needs_website: bool = False
+    generated_website_slug: Optional[str] = None
+    generated_website_status: Optional[str] = None
     google_listing_images: List[Dict[str, Any]] = Field(default_factory=list)
     google_listing_videos: List[Dict[str, Any]] = Field(default_factory=list)
     created_at: Optional[Any] = None

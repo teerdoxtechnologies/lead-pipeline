@@ -25,6 +25,7 @@ from app.schemas import (
     WebsiteBuildRequest,
     WebsiteCandidateResponse,
     WebsiteCleanupRequest,
+    WebsiteMarkRequest,
     WebsitePublishRequest,
 )
 from app.services.static_website_generator import eligible_for_static_website, websites_root
@@ -173,6 +174,54 @@ async def publish_campaign_websites(campaign_id: str, body: WebsitePublishReques
         bool(body.commit_message),
     )
     return CampaignRunResponse(job_id=task.id, campaign_id=campaign_id, status="queued")
+
+
+@router.post(
+    "/campaigns/{campaign_id}/websites/mark",
+    summary="Flag selected leads for (or against) website builds",
+)
+async def mark_campaign_websites(campaign_id: str, body: WebsiteMarkRequest):
+    """Set needs_website on selected leads of a campaign. Synchronous."""
+    campaign = get_document(CAMPAIGNS, campaign_id)
+    if campaign is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Campaign '{campaign_id}' not found.",
+        )
+    selected = {str(lead_id).strip() for lead_id in body.lead_ids if str(lead_id).strip()}
+    if not selected:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No lead IDs provided.",
+        )
+    owned = {
+        lead["id"]
+        for lead in query_collection(
+            LEADS, filters=[("campaign_id", "==", campaign_id)], limit=5000
+        )
+        if lead.get("id")
+    }
+    updated = 0
+    skipped = 0
+    for lead_id in sorted(selected):
+        if lead_id not in owned:
+            skipped += 1
+            continue
+        update_document(LEADS, lead_id, {"needs_website": bool(body.needs_website)})
+        updated += 1
+    logger.info(
+        "[Website API] Marked %d leads needs_website=%s for campaign %s (%d skipped).",
+        updated,
+        body.needs_website,
+        campaign_id,
+        skipped,
+    )
+    return {
+        "campaign_id": campaign_id,
+        "needs_website": bool(body.needs_website),
+        "updated": updated,
+        "skipped": skipped,
+    }
 
 
 @router.post(

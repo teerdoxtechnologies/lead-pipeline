@@ -136,6 +136,11 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(leadIds?.length ? { lead_ids: leadIds } : {}),
     }),
+  markWebsites: (campaignId: string, body: { lead_ids: string[]; needs_website: boolean }) =>
+    req<{ campaign_id: string; needs_website: boolean; updated: number; skipped: number }>(
+      `/api/campaigns/${campaignId}/websites/mark`,
+      { method: 'POST', body: JSON.stringify(body) },
+    ),
 
   drafts: (params?: { status?: string; lead_id?: string; page?: number; limit?: number }) => {
     const q = new URLSearchParams();
@@ -265,6 +270,9 @@ export interface Lead {
   has_website?: boolean;
   missing_website?: boolean;
   scrape_status?: string;
+  needs_website?: boolean;
+  generated_website_slug?: string | null;
+  generated_website_status?: string | null;
   google_listing_images?: { url?: string; resource_type?: string; format?: string }[];
   google_listing_videos?: { url?: string; resource_type?: string; duration?: number }[];
   created_at?: string | null;

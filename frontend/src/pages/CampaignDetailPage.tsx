@@ -43,6 +43,8 @@ export default function CampaignDetailPage() {
   const [cleanBusy, setCleanBusy] = useState(false);
   const [cleanErr, setCleanErr] = useState('');
   const [repairOpen, setRepairOpen] = useState(false);
+  const [leadSel, setLeadSel] = useState<string[]>([]);
+  const [badIds, setBadIds] = useState<string[]>([]);
 
   const listQ = useQuery({
     queryKey: ['campaigns', ''],
@@ -116,10 +118,24 @@ export default function CampaignDetailPage() {
   const repairWebsitesMut = useMutation({ mutationFn: () => api.repairWebsites(id), onSuccess: (d) => onJob(d, 'Repair websites') });
   const syncNotionMut = useMutation({ mutationFn: () => api.syncNotion(id), onSuccess: (d) => onJob(d, 'Sync Notion') });
   const genDraftsMut = useMutation({ mutationFn: () => api.generateOutreachDrafts(id), onSuccess: (d) => onJob(d, 'Generate drafts') });
+  const markMut = useMutation({
+    mutationFn: (value: boolean) => api.markWebsites(id, { lead_ids: activeSel, needs_website: value }),
+    onSuccess: (r, value) => {
+      setBadIds([]);
+      toast.success(
+        value
+          ? `Marked ${r.updated} for build${r.skipped ? `, ${r.skipped} skipped` : ''}. Queue previews from the same bar.`
+          : `Unmarked ${r.updated}. They leave the build funnel.`,
+      );
+      invalidate();
+    },
+  });
+  const buildMut = useMutation({ mutationFn: () => api.buildWebsites(id, activeSel), onSuccess: (d) => onJob(d, 'Build previews') });
+  const publishMut = useMutation({ mutationFn: () => api.publishWebsites(id, activeSel), onSuccess: (d) => onJob(d, 'Publish sites') });
 
   const queueBusy = fullMut.isPending || scrapeMut.isPending || resumeMut.isPending || cancelMut.isPending;
 
-  const actionErr = [fullMut, scrapeMut, resumeMut, cancelMut, auditMut, regenMut, repairWebsitesMut, syncNotionMut, genDraftsMut]
+  const actionErr = [fullMut, scrapeMut, resumeMut, cancelMut, auditMut, regenMut, repairWebsitesMut, syncNotionMut, genDraftsMut, markMut, buildMut, publishMut]
     .map((m) => (m.error instanceof Error ? m.error.message : m.error ? String(m.error) : ''))
     .filter(Boolean)[0];
   const err =
@@ -162,7 +178,54 @@ export default function CampaignDetailPage() {
     return true;
   });
 
-  function resetPage() { setPage(1); }
+  function resetPage() { setPage(1); setLeadSel([]); setBadIds([]); }
+
+  function toggleLead(leadId: string) {
+    setBadIds([]);
+    setLeadSel((s) => (s.includes(leadId) ? s.filter((x) => x !== leadId) : [...s, leadId]));
+  }
+
+  const listedIds = useMemo(() => new Set(leads.map((l) => String(l.id))), [leads]);
+  const activeSel = leadSel.filter((x) => listedIds.has(x));
+  const allListedSelected = leads.length > 0 && leads.every((l) => activeSel.includes(String(l.id)));
+  function toggleAllListed() {
+    setBadIds([]);
+    setLeadSel(allListedSelected ? [] : leads.map((l) => String(l.id)));
+  }
+
+  function selectedRows(): Lead[] {
+    return leads.filter((l) => activeSel.includes(String(l.id)));
+  }
+
+  function queueBuild() {
+    const rows = selectedRows();
+    const unmarked = rows.filter((l) => !l.needs_website);
+    const noEmail = rows.filter((l) => !(l.emails?.length));
+    const problems: string[] = [];
+    if (unmarked.length) problems.push(`${unmarked.length} not marked for build`);
+    if (noEmail.length) problems.push(`${noEmail.length} missing email`);
+    if (problems.length) {
+      toast.warning(`Cannot build: ${problems.join(', ')}. Unselect them or fix them first.`);
+      setBadIds([...new Set([...unmarked, ...noEmail].map((l) => String(l.id)))]);
+      return;
+    }
+    setBadIds([]);
+    buildMut.mutate();
+  }
+
+  function queuePublish() {
+    const rows = selectedRows();
+    const missing = rows.filter((l) => !l.generated_website_slug);
+    if (missing.length) {
+      toast.warning(
+        `Cannot publish: ${missing.length} ha${missing.length === 1 ? 's' : 've'} no preview yet. Build previews first or unselect them.`,
+      );
+      setBadIds(missing.map((l) => String(l.id)));
+      return;
+    }
+    setBadIds([]);
+    publishMut.mutate();
+  }
 
   const wc = candidatesQ.data?.workflow_counts as Record<string, number> | undefined;
   const nextSteps = candidatesQ.data?.next_steps;
@@ -209,12 +272,16 @@ export default function CampaignDetailPage() {
           <button className="ghost" onClick={() => scrapeMut.mutate()} disabled={queueBusy || isRunning} title="Only re-runs the Google Maps scrape for new or missing leads.">
             Maps scrape
           </button>
-          <button className="ghost" onClick={() => resumeMut.mutate()} disabled={queueBusy || isRunning || leadTotal === 0} title={leadTotal === 0 ? 'Nothing to resume yet. Run the scrape first.' : 'Continues a paused or interrupted analysis run where it stopped.'}>
-            Resume analysis
-          </button>
-          <button className="ghost" onClick={() => auditMut.mutate()} disabled={auditMut.isPending || queueBusy || withSiteTotal === 0} title={withSiteTotal === 0 ? 'No leads with websites yet. Audits need a site to check.' : 'Queues website audits for leads that have one. Watch progress in Jobs below.'}>
-            Run audits
-          </button>
+          {websiteFilter !== 'no_website' && (
+            <button className="ghost" onClick={() => resumeMut.mutate()} disabled={queueBusy || isRunning || leadTotal === 0} title={leadTotal === 0 ? 'Nothing to resume yet. Run the scrape first.' : 'Continues a paused or interrupted analysis run where it stopped.'}>
+              Resume analysis
+            </button>
+          )}
+          {websiteFilter !== 'no_website' && (
+            <button className="ghost" onClick={() => auditMut.mutate()} disabled={auditMut.isPending || queueBusy || withSiteTotal === 0} title={withSiteTotal === 0 ? 'No leads with websites yet. Audits need a site to check.' : 'Queues website audits for leads that have one. Watch progress in Jobs below.'}>
+              Run audits
+            </button>
+          )}
           <button className="ghost" onClick={() => regenMut.mutate()} disabled={regenMut.isPending || queueBusy || draftTotal === 0} title={draftTotal === 0 ? 'No drafts yet. Generate drafts from the Repairs section first.' : 'Rewrites existing outreach copy from the latest templates. Never changes outreach status.'}>
             {regenMut.isPending ? 'Queued…' : 'Regenerate drafts'}
           </button>
@@ -322,10 +389,37 @@ export default function CampaignDetailPage() {
             </select>
           </label>
         </div>
+        <div className={`bulk-bar${activeSel.length ? '' : ' idle'}`} role="group" aria-label="Lead selection actions">
+          <span><strong className="num">{activeSel.length}</strong> selected</span>
+          <span className="spacer" />
+          <button className="ghost btn-sm" onClick={() => { setBadIds([]); setLeadSel([]); }} disabled={!activeSel.length}>
+            Clear
+          </button>
+          <button className="ghost btn-sm" onClick={() => markMut.mutate(true)} disabled={!activeSel.length || markMut.isPending}>
+            {markMut.isPending ? 'Marking…' : 'Mark for build'}
+          </button>
+          <button className="ghost btn-sm" onClick={() => markMut.mutate(false)} disabled={!activeSel.length || markMut.isPending}>
+            Unmark
+          </button>
+          <button className="ghost btn-sm" onClick={queueBuild} disabled={!activeSel.length || buildMut.isPending}>
+            {buildMut.isPending ? 'Queuing…' : 'Build previews'}
+          </button>
+          <button className="ghost btn-sm" onClick={queuePublish} disabled={!activeSel.length || publishMut.isPending}>
+            {publishMut.isPending ? 'Queuing…' : 'Publish'}
+          </button>
+        </div>
         <div className="table-wrap">
           <table>
             <thead>
               <tr>
+                <th scope="col" className="col-check">
+                  <input
+                    type="checkbox"
+                    aria-label="Select all listed leads"
+                    checked={allListedSelected}
+                    onChange={toggleAllListed}
+                  />
+                </th>
                 <th scope="col">Lead</th>
                 <th scope="col">Contact</th>
                 <th scope="col">Website</th>
@@ -334,7 +428,7 @@ export default function CampaignDetailPage() {
               </tr>
             </thead>
             <tbody>
-              {leadsQ.isLoading && <SkeletonRows rows={5} cols={5} />}
+              {leadsQ.isLoading && <SkeletonRows rows={5} cols={6} />}
               {!leadsQ.isLoading &&
                 leads.map((l) => {
                   const ds = draftMap.get(l.id) ?? [];
@@ -343,6 +437,14 @@ export default function CampaignDetailPage() {
                   const gen = candMap.get(l.id);
                   return (
                     <tr key={String(l.id)}>
+                      <td className={`col-check${badIds.includes(String(l.id)) ? ' bad' : ''}`}>
+                        <input
+                          type="checkbox"
+                          aria-label={`Select ${l.business_name || l.id}`}
+                          checked={activeSel.includes(String(l.id))}
+                          onChange={() => toggleLead(String(l.id))}
+                        />
+                      </td>
                       <td>
                         <div className="cell-title">
                           <Link to={`/leads/${l.id}`}>{String(l.business_name || '—')}</Link>
@@ -387,7 +489,7 @@ export default function CampaignDetailPage() {
                 })}
               {!leadsQ.isLoading && !leads.length && (
                 <tr>
-                  <td colSpan={5}>
+                  <td colSpan={6}>
                     <EmptyState title="No leads match" body="Loosen the filters or run a scrape to add more." />
                   </td>
                 </tr>

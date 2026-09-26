@@ -313,6 +313,11 @@ ol.crumbs [aria-current='page'] { color: var(--text); font-weight: 600; overflow
   accent-color: var(--primary);
   cursor: pointer;
 }
+.col-check.bad input[type='checkbox'] {
+  accent-color: var(--danger-text);
+  outline: 2px solid var(--danger-text);
+  outline-offset: 2px;
+}
 
 /* Link that looks and behaves like a ghost button (for section-heading actions). */
 a.btn-link {

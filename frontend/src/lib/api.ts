@@ -9,13 +9,14 @@ function apiErrorDetail(text: string): string | null {
   }
 }
 
-function repairQuery(params?: RepairMapsDataParams): string {
+function repairQuery(params?: RepairParams): string {
   if (!params) return '';
   const qs = new URLSearchParams();
   if (params.fields) qs.set('fields', params.fields);
   if (params.force !== undefined) qs.set('force', String(params.force));
   if (params.lead_ids) qs.set('lead_ids', params.lead_ids);
   if (params.sync_notion !== undefined) qs.set('sync_notion', String(params.sync_notion));
+  if (params.reset_status !== undefined) qs.set('reset_status', String(params.reset_status));
   const s = qs.toString();
   return s ? `?${s}` : '';
 }
@@ -36,11 +37,12 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
   return (await res.text()) as unknown as T;
 }
 
-export interface RepairMapsDataParams {
+export interface RepairParams {
   fields?: string;
   force?: boolean;
   lead_ids?: string;
   sync_notion?: boolean;
+  reset_status?: boolean;
 }
 
 export interface MapsRepairCandidate {
@@ -80,10 +82,11 @@ export const api = {
   runFull: (id: string) => req<Job>(`/api/campaigns/${id}/run-full`, { method: 'POST' }),
   resume: (id: string) => req<Job>(`/api/campaigns/${id}/resume`, { method: 'POST' }),
   cancel: (id: string) => req<unknown>(`/api/campaigns/${id}/cancel`, { method: 'POST' }),
-  repairWebsites: (id: string) => req<Job>(`/api/campaigns/${id}/repair-websites`, { method: 'POST' }),
-  repairMapsData: (id: string, params?: RepairMapsDataParams) =>
+  repairWebsites: (id: string, params?: RepairParams) =>
+    req<Job>(`/api/campaigns/${id}/repair-websites${repairQuery(params)}`, { method: 'POST' }),
+  repairMapsData: (id: string, params?: RepairParams) =>
     req<Job>(`/api/campaigns/${id}/repair-maps-data${repairQuery(params)}`, { method: 'POST' }),
-  repairMapsDataPreview: (id: string, params?: RepairMapsDataParams) =>
+  repairMapsDataPreview: (id: string, params?: RepairParams) =>
     req<MapsRepairPlan>(`/api/campaigns/${id}/repair-maps-data/preview${repairQuery(params)}`),
   syncNotion: (id: string, force = false) =>
     req<Job>(`/api/campaigns/${id}/sync-notion${force ? '?force=true' : ''}`, { method: 'POST' }),

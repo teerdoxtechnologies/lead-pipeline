@@ -405,14 +405,17 @@ async def repair_campaign_websites_endpoint(
         True,
         description="Set repaired leads back to pending so resume can run the website track.",
     ),
+    lead_ids: str | None = Query(None, description="Optional comma-separated lead IDs to repair."),
 ):
     _ensure_campaign_can_run(campaign_id, action="website repair", queued_status=CampaignStatus.running)
+    selected_lead_ids = _parse_csv_query(lead_ids)
     logger.info(
-        "[Campaign API] Queueing website repair for campaign %s reset_status=%s.",
+        "[Campaign API] Queueing website repair for campaign %s reset_status=%s lead_ids=%s.",
         campaign_id,
         reset_status,
+        selected_lead_ids,
     )
-    task = repair_campaign_websites.delay(campaign_id, reset_status)
+    task = repair_campaign_websites.delay(campaign_id, reset_status, selected_lead_ids)
     update_document(
         CAMPAIGNS,
         campaign_id,

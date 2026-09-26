@@ -2633,6 +2633,18 @@ def audit_campaign_websites(
         return {"status": "failed", "campaign_id": campaign_id, "error": str(exc)}
 
 
+def _select_repair_website_leads(
+    leads: List[Dict[str, Any]], lead_ids: Optional[List[str]] = None
+) -> List[Dict[str, Any]]:
+    """Narrow no-website repair leads to an explicit selection, if given."""
+    selected = {
+        str(lead_id).strip() for lead_id in (lead_ids or []) if str(lead_id).strip()
+    }
+    if not selected:
+        return leads
+    return [lead for lead in leads if lead.get("id") in selected]
+
+
 @celery_app.task(
     name="tasks.repair_campaign_websites",
     bind=True,
@@ -2644,8 +2656,13 @@ def repair_campaign_websites(
     self,
     campaign_id: str,
     reset_status: bool = True,
+    lead_ids: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
-    logger.info("[Website Repair] Starting Maps website repair for campaign %s.", campaign_id)
+    logger.info(
+        "[Website Repair] Starting Maps website repair for campaign %s (lead_ids=%s).",
+        campaign_id,
+        sorted({str(lead_id).strip() for lead_id in (lead_ids or []) if str(lead_id).strip()}),
+    )
     campaign = get_document(CAMPAIGNS, campaign_id)
     if not campaign:
         return {"status": "failed", "reason": "campaign_not_found", "campaign_id": campaign_id}
@@ -2669,6 +2686,8 @@ def repair_campaign_websites(
         ],
         limit=5000,
     )
+    selected_ids = {str(lead_id).strip() for lead_id in (lead_ids or []) if str(lead_id).strip()}
+    leads = _select_repair_website_leads(leads, lead_ids)
     leads_by_id = {lead["id"]: lead for lead in leads}
     repair_candidates = [
         {
@@ -2684,6 +2703,7 @@ def repair_campaign_websites(
     result = {
         "status": "completed",
         "campaign_id": campaign_id,
+        "selected_leads": len(selected_ids),
         "checked": 0,
         "repaired": 0,
         "failed": 0,

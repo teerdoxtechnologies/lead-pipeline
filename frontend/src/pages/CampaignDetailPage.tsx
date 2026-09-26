@@ -236,7 +236,6 @@ export default function CampaignDetailPage() {
 
       <div className="stat-grid" role="group" aria-label="Campaign totals">
         <StatCard label="Found" value={num(s?.businesses_found)} hint="places returned" tone="accent" />
-        <StatCard label="Saved" value={num(s?.businesses_persisted)} hint="in database" />
         {websiteFilter !== 'all' && (
           <StatCard label="Filtered" value={num(s?.website_filtered)} hint="dropped by website filter" tone="neutral" />
         )}

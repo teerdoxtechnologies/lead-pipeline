@@ -18,6 +18,13 @@ type Bag = Record<string, unknown>;
 const bag = (v: unknown): Bag => (v && typeof v === 'object' ? (v as Bag) : {});
 const str = (v: unknown): string => (typeof v === 'string' ? v : v == null ? '' : String(v));
 const arr = (v: unknown): unknown[] => (Array.isArray(v) ? v : []);
+/** Cloudinary thumbnail sized to the 96px grid (2x for retina). */
+const thumbUrl = (url: string): string => {
+  const marker = '/upload/';
+  const at = url.indexOf(marker);
+  if (at < 0) return url;
+  return `${url.slice(0, at + marker.length)}w_192,h_192,c_fill,q_auto/${url.slice(at + marker.length)}`;
+};
 const fmtMs = (v: unknown): string => {
   if (typeof v !== 'number' || Number.isNaN(v)) return '—';
   return v >= 1000 ? `${(v / 1000).toFixed(1)} s` : `${Math.round(v)} ms`;
@@ -296,6 +303,7 @@ export default function LeadPage() {
         }
       >
         {leadQ.isLoading ? <p className="muted small">Loading…</p> : lead ? (
+          <>
           <Fields>
             <Field label="Emails">
               {(lead.emails?.length ?? 0) > 0 ? (
@@ -342,6 +350,33 @@ export default function LeadPage() {
               </Field>
             ) : null}
           </Fields>
+          {((lead.google_listing_images ?? []).length > 0 || (lead.google_listing_videos ?? []).length > 0) && (
+            <div className="media-block">
+              {(lead.google_listing_images ?? []).length > 0 && (
+                <div className="media-grid">
+                  {(lead.google_listing_images ?? []).map((m, i) => (
+                    m?.url ? (
+                      <a key={`${m.url}-${i}`} href={m.url} target="_blank" rel="noreferrer">
+                        <img src={thumbUrl(m.url)} alt={`${lead.business_name ?? 'Business'} photo ${i + 1}`} loading="lazy" />
+                      </a>
+                    ) : null
+                  ))}
+                </div>
+              )}
+              {(lead.google_listing_videos ?? []).length > 0 && (
+                <div className="media-links">
+                  {(lead.google_listing_videos ?? []).map((v, i) => (
+                    v?.url ? (
+                      <a key={`${v.url}-${i}`} href={v.url} target="_blank" rel="noreferrer">
+                        Video {i + 1}{typeof v.duration === 'number' ? ` (${Math.round(v.duration)}s)` : ''}
+                      </a>
+                    ) : null
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+          </>
         ) : null}
       </Section>
 

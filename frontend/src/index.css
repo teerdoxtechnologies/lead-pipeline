@@ -446,6 +446,10 @@ fieldset { border: 1px solid var(--border); border-radius: var(--radius-sm); pad
 fieldset legend { font-size: 12.5px; font-weight: 600; color: var(--muted); padding: 0 6px; }
 fieldset .row input[type='checkbox'] { margin: 0; }
 .field-options { display: flex; flex-wrap: wrap; gap: 8px 18px; }
+.media-block { margin-top: 12px; }
+.media-grid { display: flex; flex-wrap: wrap; gap: 8px; }
+.media-grid img { width: 96px; height: 96px; object-fit: cover; border-radius: var(--radius-sm); border: 1px solid var(--border); display: block; }
+.media-links { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 8px; }
 
 .err {
   background: var(--danger-soft);

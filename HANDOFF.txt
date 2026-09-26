@@ -568,7 +568,13 @@ Known caveats and follow-ups
    campaign/cache evidence is older than SEARCH_EVIDENCE_STALE_AFTER_DAYS.
 
 7. Tests currently focus on helpers rather than full end-to-end API tests. Main
-   test file: tests/test_campaign_helpers.py.
+   test file: tests/  test_campaign_helpers.py.
+- Listing media in the UI: LeadResponse carries google_listing_images
+  /videos (stored items already hold the Cloudinary URL); the lead
+  page shows counts in the field plus a full-width thumbnail grid
+  below (click through to full image) and video links with durations.
+  Thumbnails use Cloudinary w_192,h_192,c_fill,q_auto params so the
+  browser never downloads more than the 96px slot needs.
 
 8. Some files contain pre-existing mojibake in prompt strings, such as encoded
    em dashes. Do not do broad formatting cleanup unless the user asks.
@@ -2341,6 +2347,16 @@ o_website follow-ups now use the new preview-specific subject/body pair for oll
   (ScanShield twice) and suspect stale review counts (2495 twice)
   still open.
   Covered by backend/tests/test_brand_filter.py (6 tests).
+- Review text guarantee + completeness: stored reviews always carry
+  text (scrape loop drops textless, sanitize requires text, repair
+  re-sanitizes; google_review_count stays Google's own number, never
+  len(reviews)). _upload_and_sanitize pre-filters textless before
+  avatar upload. Fetch no longer stalls on textless cards: stagnation
+  keys on newly mounted cards via _review_stagnation_update, seen
+  review IDs skip re-extraction. Floor: up to 6 text reviews when 6+
+  exist, else all available. Covered by
+  backend/tests/test_review_fetch.py + sanitize cases in
+  test_campaign_helpers.py.
 - Maps-data repair selection is exposed via components
   /RepairMapsDataDialog.tsx on the campaign detail page (replaces the
   direct-queue button): lead IDs first (comma-separated, blank means

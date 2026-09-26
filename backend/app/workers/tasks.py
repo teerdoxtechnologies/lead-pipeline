@@ -42,6 +42,7 @@ from app.firebase import (
     add_document,
     get_db,
     get_document,
+    heal_counter,
     query_collection,
     set_document,
     update_document,
@@ -827,7 +828,7 @@ def _campaign_with_derived_summary(campaign_id: str, campaign: Dict[str, Any]) -
 
     stats = dict(campaign.get("stats") or {})
     maps = dict(stats.get("maps") or {})
-    maps.setdefault("businesses_persisted", lead_count)
+    maps["businesses_persisted"] = heal_counter(maps.get("businesses_persisted"), lead_count)
     maps["with_website"] = with_website
     maps["missing_website"] = missing_website
     maps["needs_website"] = missing_website

@@ -32,6 +32,7 @@ from app.firebase import (
     delete_document,
     get_db,
     get_document,
+    heal_counter,
     query_collection,
     update_document,
 )
@@ -736,13 +737,11 @@ def _campaign_with_lead_derived_maps_stats(campaign: dict, leads: list[dict]) ->
         or lead.get("website_audit_status") in {"failed", "blocked_by_security"}
     )
 
-    if maps.get("businesses_persisted") is None:
-        maps["businesses_persisted"] = lead_count
+    maps["businesses_persisted"] = heal_counter(maps.get("businesses_persisted"), lead_count)
     maps["with_website"] = with_website
     maps["missing_website"] = missing_website
     maps["needs_website"] = needs_website
-    if stats.get("total") is None:
-        stats["total"] = lead_count
+    stats["total"] = heal_counter(stats.get("total"), lead_count)
     stats["maps"] = maps
     generated_websites = dict(stats.get("generated_websites") or {})
     generated_websites["published"] = websites_published

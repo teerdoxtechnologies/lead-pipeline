@@ -2365,7 +2365,15 @@ o_website follow-ups now use the new preview-specific subject/body pair for oll
   (also closes the shared calendar-event gap). Lead page Record
   section has the danger button + DeleteLeadDialog (typed business-name
   gate); success toasts and routes to the campaign page. Covered by
-  backend/tests/test_lead_delete.py (10 tests).
+  backend/tests/  test_lead_delete.py (10 tests).
+- The Saved card is gone from the campaign detail page: it displayed
+  businesses_persisted, a per-run new-writes counter, mislabeled as
+  inventory (a re-scrape that reuses everything resets it to 0; a
+  delete then drove it to -1). Run metrics are not inventory.
+  app.firebase.heal_counter heals missing/negative counters from
+  derived lead counts at the two summary backfills (routes/scrape +
+  tasks); legit zeros pass through. Covered by
+  backend/tests/test_firebase_helpers.py.
 - Maps-data repair selection is exposed via components
   /RepairMapsDataDialog.tsx on the campaign detail page (replaces the
   direct-queue button): lead IDs first (comma-separated, blank means

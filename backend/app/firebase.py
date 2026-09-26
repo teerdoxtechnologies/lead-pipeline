@@ -211,3 +211,14 @@ def delete_document(collection: str, doc_id: str) -> None:
     db = get_db()
     db.collection(collection).document(doc_id).delete()
     logger.debug("Deleted document %s/%s", collection, doc_id)
+
+
+def heal_counter(value: Any, fallback: int) -> int:
+    """Replace a missing or negative stat counter with a derived fallback.
+
+    Legitimate zeros pass through untouched; only absent or impossible
+    values (e.g. a decrement applied to a per-run counter) get healed.
+    """
+    if not isinstance(value, int) or value < 0:
+        return fallback
+    return value

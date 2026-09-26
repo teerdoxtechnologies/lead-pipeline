@@ -386,6 +386,8 @@ class LeadResponse(BaseModel):
     has_website: bool = False
     missing_website: bool = False
     scrape_status: ScrapeStatus = ScrapeStatus.pending
+    google_listing_images: List[Dict[str, Any]] = Field(default_factory=list)
+    google_listing_videos: List[Dict[str, Any]] = Field(default_factory=list)
     created_at: Optional[Any] = None
     updated_at: Optional[Any] = None
 

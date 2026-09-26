@@ -1288,9 +1288,7 @@ def _delete_campaign_doc(campaign_id: str) -> bool:
         draft_docs.extend(_query_all(EMAIL_DRAFTS, filters=[("lead_id", "==", lead_id)]))
 
     for draft in draft_docs:
-        _delete_gmail_draft(draft)
-        _archive_notion_page(draft)
-        delete_document(EMAIL_DRAFTS, draft["id"])
+        _delete_outreach_draft(draft)
 
     for collection, report in report_docs:
         _archive_notion_page(report)
@@ -1309,16 +1307,99 @@ def _delete_campaign_doc(campaign_id: str) -> bool:
     return True
 
 
-def _delete_gmail_draft(draft: dict) -> None:
+def _delete_gmail_draft(draft: dict) -> bool:
     gmail_draft_id = draft.get("gmail_draft_id")
     if not gmail_draft_id:
-        return
+        return False
 
     try:
         from app.services.gmail_service import delete_gmail_draft
         delete_gmail_draft(gmail_draft_id)
+        return True
     except Exception:
         logger.exception("Failed to delete Gmail draft %s during campaign cleanup", gmail_draft_id)
+        return False
+
+
+def _delete_calendar_event_for_draft(draft: dict) -> bool:
+    event_id = draft.get("follow_up_calendar_event_id")
+    if not event_id:
+        return False
+
+    try:
+        from app.services.google_calendar_service import delete_calendar_event
+        return delete_calendar_event(event_id)
+    except Exception:
+        logger.exception("Failed to delete calendar event %s during cleanup", event_id)
+        return False
+
+
+def _delete_outreach_draft(draft: dict) -> dict:
+    """Delete one outreach draft and its external traces. Never raises."""
+    gmail_deleted = _delete_gmail_draft(draft)
+    calendar_deleted = _delete_calendar_event_for_draft(draft)
+    _archive_notion_page(draft)
+    delete_document(EMAIL_DRAFTS, draft["id"])
+    return {"gmail_deleted": gmail_deleted, "calendar_deleted": calendar_deleted}
+
+
+def _delete_lead_doc(lead_id: str) -> dict:
+    """Delete one lead and every trace it owns. Externals first, docs last."""
+    lead = get_document(LEADS, lead_id)
+    if lead is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Lead '{lead_id}' not found.",
+        )
+    campaign_id = lead.get("campaign_id") or ""
+
+    draft_docs = _query_all(EMAIL_DRAFTS, filters=[("lead_id", "==", lead_id)])
+    gmail_deleted = 0
+    calendar_deleted = 0
+    for draft in draft_docs:
+        outcome = _delete_outreach_draft(draft)
+        gmail_deleted += 1 if outcome["gmail_deleted"] else 0
+        calendar_deleted += 1 if outcome["calendar_deleted"] else 0
+
+    report_docs: list = []
+    for collection in (AUDIT_REPORTS, NO_WEBSITE_REPORTS):
+        report_docs.extend(
+            (collection, report)
+            for report in _query_all(collection, filters=[("lead_id", "==", lead_id)])
+        )
+
+    _delete_campaign_cloudinary_media(campaign_id, [lead])
+    _delete_campaign_static_paths(campaign_id, [lead], report_docs)
+    _delete_campaign_export_bundles(campaign_id)
+
+    for _collection, report in report_docs:
+        _archive_notion_page(report)
+        delete_document(_collection, report["id"])
+
+    _archive_notion_page(lead)
+    delete_document(LEADS, lead_id)
+
+    if campaign_id and get_document(CAMPAIGNS, campaign_id) is not None:
+        from google.cloud.firestore_v1 import Increment
+
+        decrement = {
+            "stats.total": Increment(-1),
+            "stats.maps.businesses_persisted": Increment(-1),
+        }
+        if lead.get("has_website"):
+            decrement["stats.maps.with_website"] = Increment(-1)
+        else:
+            decrement["stats.maps.missing_website"] = Increment(-1)
+        update_document(CAMPAIGNS, campaign_id, decrement)
+
+    return {
+        "lead_id": lead_id,
+        "business_name": lead.get("business_name") or "",
+        "reports": len(report_docs),
+        "drafts": len(draft_docs),
+        "gmail_deleted": gmail_deleted,
+        "calendar_deleted": calendar_deleted,
+    }
 
 
 def _all_campaign_ids() -> list[str]:

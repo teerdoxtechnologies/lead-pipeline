@@ -75,6 +75,23 @@ def sync_follow_up_calendar_event(
         }
 
 
+def delete_calendar_event(event_id: str) -> bool:
+    """Delete a follow-up reminder event. Never raises; False on any failure."""
+    if not event_id:
+        return False
+    try:
+        settings = get_settings()
+        service = build("calendar", "v3", credentials=get_google_credentials())
+        service.events().delete(  # type: ignore[attr-defined]
+            calendarId=settings.google_calendar_id, eventId=event_id
+        ).execute()
+        logger.info("[Calendar] Deleted follow-up reminder event %s.", event_id)
+        return True
+    except Exception as exc:
+        logger.warning("[Calendar] Failed to delete reminder event %s: %s", event_id, exc)
+        return False
+
+
 def _calendar_event_body(
     *,
     outreach_id: str,

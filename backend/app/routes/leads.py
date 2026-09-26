@@ -211,6 +211,29 @@ async def update_lead(lead_id: str, body: LeadUpdateRequest):
     return _serialise_lead(updated)
 
 
+LEAD_DELETE_CONFIRMATION = "DELETE_LEAD"
+
+
+@router.delete(
+    "/leads/{lead_id}",
+    summary="Delete a lead and every trace it owns",
+)
+async def delete_lead(
+    lead_id: str,
+    confirm: str = Query(..., description="Must be 'DELETE_LEAD'."),
+):
+    """Delete one lead: drafts, reports, media, static artifacts, Gmail
+    drafts, calendar events, Notion pages, and the lead doc itself."""
+    if confirm != LEAD_DELETE_CONFIRMATION:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Must confirm with '{LEAD_DELETE_CONFIRMATION}'.",
+        )
+    from app.routes.scrape import _delete_lead_doc
+
+    return _delete_lead_doc(lead_id)
+
+
 @router.get(
     "/leads/{lead_id}/diagnostics",
     summary="Explain lead repair, Notion, contact, and generated website readiness",
@@ -289,6 +312,8 @@ def _serialise_lead(doc: dict) -> LeadResponse:
         has_website=doc.get("has_website", False),
         missing_website=doc.get("missing_website", not doc.get("has_website", False)),
         scrape_status=ScrapeStatus(doc.get("scrape_status", "pending")),
+        google_listing_images=doc.get("google_listing_images") or [],
+        google_listing_videos=doc.get("google_listing_videos") or [],
         created_at=doc.get("created_at"),
         updated_at=doc.get("updated_at"),
     )

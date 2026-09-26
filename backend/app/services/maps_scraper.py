@@ -793,6 +793,17 @@ async def _extract_review_count(page: Page) -> Optional[int]:
     return None
 
 
+def _review_stagnation_update(
+    *, new_cards_mounted: bool, saved_grew: bool, stagnant_passes: int
+) -> int:
+    """Next stagnant-pass count for the review fetch loop.
+
+    Textless cards must not stall the fetch, so any progress resets the
+    counter: newly mounted cards OR newly saved text reviews.
+    """
+    return 0 if (new_cards_mounted or saved_grew) else stagnant_passes + 1
+
+
 async def _extract_customer_reviews(
     page: Page,
     max_reviews: int = 9,
@@ -829,12 +840,16 @@ async def _extract_customer_reviews(
 
     reviews: List[Dict[str, Any]] = []
     seen: set[str] = set()
+    seen_ids: set[str] = set()
+    max_visible = 0
     try:
         stagnant_passes = 0
         for pass_index in range(1, 13):
             before_count = len(reviews)
             cards = await _review_cards_locator(page)
             visible_count = await cards.count()
+            new_cards = visible_count > max_visible
+            max_visible = max(max_visible, visible_count)
             logger.info(
                 "[Maps Reviews] %s: review fetch pass %s visible_cards=%s saved_reviews=%s/%s.",
                 business_label,
@@ -847,7 +862,15 @@ async def _extract_customer_reviews(
                 if len(reviews) >= max_reviews:
                     break
                 card = cards.nth(index)
+                try:
+                    rid = await card.get_attribute("data-review-id", timeout=500) or ""
+                except Exception:
+                    rid = ""
+                if rid and rid in seen_ids:
+                    continue
                 review = await _extract_review_card(card, business_name=business_label, visible_index=index + 1)
+                if rid:
+                    seen_ids.add(rid)
                 if not review or not review.get("text"):
                     continue
                 key = _review_key(review)
@@ -869,10 +892,11 @@ async def _extract_customer_reviews(
                 )
             if len(reviews) >= max_reviews:
                 break
-            if len(reviews) <= before_count:
-                stagnant_passes += 1
-            else:
-                stagnant_passes = 0
+            stagnant_passes = _review_stagnation_update(
+                new_cards_mounted=new_cards,
+                saved_grew=len(reviews) > before_count,
+                stagnant_passes=stagnant_passes,
+            )
             if stagnant_passes >= 4:
                 logger.info(
                     "[Maps Reviews] %s: stopping review fetch after %s stagnant passes.",

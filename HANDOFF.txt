@@ -2355,8 +2355,17 @@ o_website follow-ups now use the new preview-specific subject/body pair for oll
   keys on newly mounted cards via _review_stagnation_update, seen
   review IDs skip re-extraction. Floor: up to 6 text reviews when 6+
   exist, else all available. Covered by
-  backend/tests/test_review_fetch.py + sanitize cases in
-  test_campaign_helpers.py.
+  backend/tests/  test_review_fetch.py + sanitize cases in
+  test_campaign_helpers.py (review text guarantee + 6-review floor).
+- Single-lead delete: DELETE /leads/{id}?confirm=DELETE_LEAD via
+  _delete_lead_doc (externals first: drafts with Gmail + calendar
+  events, reports, Cloudinary, static + git push, export bundles;
+  then Notion archival, lead doc, stat decrements of total/persisted/
+  website bucket). Campaign purge refactored onto _delete_outreach_draft
+  (also closes the shared calendar-event gap). Lead page Record
+  section has the danger button + DeleteLeadDialog (typed business-name
+  gate); success toasts and routes to the campaign page. Covered by
+  backend/tests/test_lead_delete.py (10 tests).
 - Maps-data repair selection is exposed via components
   /RepairMapsDataDialog.tsx on the campaign detail page (replaces the
   direct-queue button): lead IDs first (comma-separated, blank means

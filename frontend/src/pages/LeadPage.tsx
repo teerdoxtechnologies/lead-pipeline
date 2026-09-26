@@ -1,9 +1,10 @@
 import { useState, type ReactNode } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { api, type Outreach } from '../lib/api';
 import ConfirmSendDialog from '../components/ConfirmSendDialog';
+import DeleteLeadDialog from '../components/DeleteLeadDialog';
 import EditContactDialog from '../components/EditContactDialog';
 import RepairMapsDataDialog from '../components/RepairMapsDataDialog';
 import { getTrackedJobs, latestJobFor, trackJob } from '../lib/jobs';
@@ -41,6 +42,8 @@ export default function LeadPage() {
   const [sending, setSending] = useState(false);
   const [editContactOpen, setEditContactOpen] = useState(false);
   const [repairOpen, setRepairOpen] = useState(false);
+  const [delOpen, setDelOpen] = useState(false);
+  const navigate = useNavigate();
 
   const leadQ = useQuery({ queryKey: ['lead', leadId], queryFn: () => api.lead(leadId) });
   const diagQ = useQuery({ queryKey: ['lead-diag', leadId], queryFn: () => api.leadDiagnostics(leadId) });
@@ -276,6 +279,20 @@ export default function LeadPage() {
           leadIdsLocked
           onClose={() => setRepairOpen(false)}
           onQueued={(d) => { onJob(d, 'Repair Maps data'); setRepairOpen(false); }}
+        />
+      )}
+      {delOpen && lead && (
+        <DeleteLeadDialog
+          leadId={leadId}
+          leadName={lead.business_name ?? leadId}
+          onClose={() => setDelOpen(false)}
+          onDeleted={(summary) => {
+            toast.success(`Lead “${summary.business_name || 'lead'}” deleted.`);
+            qc.invalidateQueries({ queryKey: ['lead', leadId] });
+            qc.invalidateQueries({ queryKey: ['leads'] });
+            qc.invalidateQueries({ queryKey: ['campaigns'] });
+            navigate(campaignId ? `/campaigns/${campaignId}` : '/campaigns');
+          }}
         />
       )}
 
@@ -745,7 +762,11 @@ export default function LeadPage() {
         )}
       </Section>
 
-      <Section title="Record" hint="Identifiers and the raw payloads behind this page.">
+      <Section title="Record" hint="Identifiers and the raw payloads behind this page." action={
+        <button className="danger btn-sm" onClick={() => setDelOpen(true)} disabled={!lead}>
+          Delete lead
+        </button>
+      }>
         <Fields>
           <Field label="Lead id"><span className="mono">{leadId}</span></Field>
           {campaignId ? <Field label="Campaign"><Link to={`/campaigns/${campaignId}`} className="mono">{campaignName ?? campaignId}</Link></Field> : null}

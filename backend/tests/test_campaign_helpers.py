@@ -187,6 +187,17 @@ class CampaignHelperTests(unittest.TestCase):
         self.assertNotIn("listing_reviews_url", reviews[0])
         self.assertNotIn("avatar_source_url", reviews[0])
 
+    def test_sanitize_google_reviews_drops_textless(self):
+        reviews = _sanitize_google_reviews([
+            {"author": "A", "rating": 5, "text": "Great work."},
+            {"author": "B", "rating": 4, "text": ""},
+            {"author": "C", "rating": 3},
+            "not-a-dict",
+        ])
+
+        self.assertEqual(len(reviews), 1)
+        self.assertEqual(reviews[0]["author"], "A")
+
     def test_carry_existing_review_avatars_reuses_cloudinary_fields(self):
         reviews = _carry_existing_review_avatars(
             [

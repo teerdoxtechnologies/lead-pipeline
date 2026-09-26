@@ -102,6 +102,11 @@ export const api = {
     return req<Lead[]>(`/api/campaigns/${campaignId}/leads?${q.toString()}`);
   },
   lead: (leadId: string) => req<LeadDetail>(`/api/leads/${leadId}`),
+  deleteLead: (leadId: string) =>
+    req<{ lead_id: string; business_name: string; reports: number; drafts: number; gmail_deleted: number; calendar_deleted: number }>(
+      `/api/leads/${leadId}?confirm=DELETE_LEAD`,
+      { method: 'DELETE' },
+    ),
   updateLead: (leadId: string, body: { needs_website?: boolean; emails?: string[]; phone?: string | null; address?: string | null; website?: string | null }) =>
     req<Lead>(`/api/leads/${leadId}`, { method: 'PATCH', body: JSON.stringify(body) }),
   leadDiagnostics: (leadId: string) => req<LeadDiagnostics>(`/api/leads/${leadId}/diagnostics`),
@@ -260,6 +265,8 @@ export interface Lead {
   has_website?: boolean;
   missing_website?: boolean;
   scrape_status?: string;
+  google_listing_images?: { url?: string; resource_type?: string; format?: string }[];
+  google_listing_videos?: { url?: string; resource_type?: string; duration?: number }[];
   created_at?: string | null;
   updated_at?: string | null;
 }

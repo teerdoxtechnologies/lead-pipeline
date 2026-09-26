@@ -558,6 +558,11 @@ def _upload_and_sanitize_google_reviews(
     campaign_id: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     reviews = (reviews or [])[:9]
+    reviews = [
+        review
+        for review in reviews
+        if isinstance(review, dict) and (review.get("text") or "").strip()
+    ]
     if not reviews:
         return []
     reviews = _carry_existing_review_avatars(reviews, existing_reviews)

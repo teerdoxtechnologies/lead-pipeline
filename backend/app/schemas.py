@@ -142,6 +142,7 @@ class JobStatusResponse(BaseModel):
     job_id: str
     status: str
     result: Optional[Any] = None
+    logs: List[str] = Field(default_factory=list)
 
 
 class WebsiteBuildRequest(BaseModel):

@@ -18,7 +18,7 @@ def create_celery_app() -> Celery:
         "agency_scraper",
         broker=settings.redis_url,
         backend=settings.redis_url,
-        include=["app.workers.tasks"],
+        include=["app.workers.tasks", "app.workers.task_logs"],
     )
 
     app.conf.update(

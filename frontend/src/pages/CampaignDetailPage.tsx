@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { toast } from 'sonner';
-import { trackJob } from '../lib/jobs';
+import { getTrackedJobs, latestJobFor, trackJob } from '../lib/jobs';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, type Lead, type Outreach, type WebsiteCleanupResult } from '../lib/api';
 import { fmtDate, isActiveJob, num, relTime } from '../lib/format';
@@ -30,7 +30,9 @@ function draftsByLead(items: Outreach[]): Map<string, Outreach[]> {
 export default function CampaignDetailPage() {
   const { id = '' } = useParams();
   const qc = useQueryClient();
-  const [lastJobId, setLastJobId] = useState('');
+  const [lastJobId, setLastJobId] = useState(
+    () => latestJobFor(getTrackedJobs(), { campaignId: id })?.jobId ?? '',
+  );
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState('');
   const [siteFilter, setSiteFilter] = useState(''); // '' | 'own' | 'needs'
@@ -99,7 +101,7 @@ export default function CampaignDetailPage() {
   const onJob = (data: { job_id?: string }, action: string) => {
     if (data?.job_id) {
       setLastJobId(data.job_id);
-      trackJob(data.job_id, `${action} · ${campaign?.name ?? id}`);
+      trackJob(data.job_id, `${action} · ${campaign?.name ?? id}`, { campaignId: id });
     }
     toast.success(`${action} started. Follow it in Jobs below.`);
     invalidate();

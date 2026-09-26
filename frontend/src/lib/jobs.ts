@@ -9,6 +9,9 @@ export interface TrackedJob {
   rehydrated?: boolean;
   /** True to poll without any completion toasts (fire-and-forget from the user's view). */
   silent?: boolean;
+  /** Owning entities, so pages can re-attach to their latest job after remount. */
+  campaignId?: string;
+  leadId?: string;
 }
 
 const MAX_TRACKED = 10;
@@ -24,11 +27,18 @@ function persist() {
     localStorage.setItem(
       STORAGE_KEY,
       JSON.stringify(
-        jobs.map((j) => ({ jobId: j.jobId, label: j.label, trackedAt: j.trackedAt, silent: j.silent ?? false })),
+        jobs.map((j) => ({
+          jobId: j.jobId,
+          label: j.label,
+          trackedAt: j.trackedAt,
+          silent: j.silent ?? false,
+          campaignId: j.campaignId,
+          leadId: j.leadId,
+        })),
       ),
     );
   } catch {
-    /* storage unavailable (private mode): tracking simply stays memory-only */
+    /* storage unavailable (private mode) — tracking simply stays memory-only */
   }
 }
 
@@ -36,7 +46,14 @@ function rehydrate(): TrackedJob[] {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return [];
-    const parsed = JSON.parse(raw) as { jobId?: string; label?: string; trackedAt?: number; silent?: boolean }[];
+    const parsed = JSON.parse(raw) as {
+      jobId?: string;
+      label?: string;
+      trackedAt?: number;
+      silent?: boolean;
+      campaignId?: string;
+      leadId?: string;
+    }[];
     if (!Array.isArray(parsed)) return [];
     const now = Date.now();
     return parsed
@@ -54,6 +71,8 @@ function rehydrate(): TrackedJob[] {
         trackedAt: Number(e.trackedAt),
         rehydrated: true as const,
         silent: e.silent === true,
+        campaignId: typeof e.campaignId === 'string' && e.campaignId ? e.campaignId : undefined,
+        leadId: typeof e.leadId === 'string' && e.leadId ? e.leadId : undefined,
       }));
   } catch {
     return [];
@@ -78,16 +97,28 @@ function emit() {
  * on terminal state. Deduplicated by job_id, capped, and persisted so jobs
  * still running across a reload keep reporting. Entries already terminal on
  * first sight after a reload are dropped silently (that news is stale).
- * Pass { silent: true } to poll without any completion toasts.
+ * Pass { silent: true } to poll without any completion toasts, and
+ * { campaignId, leadId } so pages can re-attach to their latest job.
  */
-export function trackJob(jobId: string, label: string, opts?: { silent?: boolean }) {
+export function trackJob(
+  jobId: string,
+  label: string,
+  opts?: { silent?: boolean; campaignId?: string; leadId?: string },
+) {
   ensureHydrated();
   const id = String(jobId || '').trim();
   if (!id) return;
-  jobs = [{ jobId: id, label, trackedAt: Date.now(), silent: opts?.silent === true }, ...jobs.filter((j) => j.jobId !== id)].slice(
-    0,
-    MAX_TRACKED,
-  );
+  jobs = [
+    {
+      jobId: id,
+      label,
+      trackedAt: Date.now(),
+      silent: opts?.silent === true,
+      campaignId: opts?.campaignId || undefined,
+      leadId: opts?.leadId || undefined,
+    },
+    ...jobs.filter((j) => j.jobId !== id),
+  ].slice(0, MAX_TRACKED);
   persist();
   emit();
 }
@@ -116,4 +147,28 @@ function snapshot(): TrackedJob[] {
 
 export function useTrackedJobs(): TrackedJob[] {
   return useSyncExternalStore(subscribe, snapshot, snapshot);
+}
+
+/** Synchronous read for state initializers (remount recovery). */
+export function getTrackedJobs(): TrackedJob[] {
+  ensureHydrated();
+  return jobs;
+}
+
+/** Adoptions older than this are ignored (the job is long over). */
+const ADOPT_MAX_AGE_MS = 6 * 60 * 60 * 1000;
+
+/** Newest non-silent tracked job for the entity, so remounted pages re-attach. */
+export function latestJobFor(
+  jobs: TrackedJob[],
+  f: { campaignId?: string; leadId?: string },
+): TrackedJob | undefined {
+  const now = Date.now();
+  return jobs.find(
+    (j) =>
+      !j.silent &&
+      now - j.trackedAt < ADOPT_MAX_AGE_MS &&
+      ((f.campaignId != null && f.campaignId !== '' && j.campaignId === f.campaignId) ||
+        (f.leadId != null && f.leadId !== '' && j.leadId === f.leadId)),
+  );
 }

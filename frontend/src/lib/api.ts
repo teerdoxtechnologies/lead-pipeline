@@ -242,6 +242,7 @@ export interface JobStatus {
   job_id: string;
   status: string;
   result?: unknown;
+  logs?: string[];
   [k: string]: unknown;
 }
 

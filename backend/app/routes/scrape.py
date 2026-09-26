@@ -64,6 +64,7 @@ from app.workers.tasks import (
     bulk_delete_campaigns,
 )
 from app.workers.celery_app import celery_app
+from app.workers.task_logs import read_job_log_tail
 from celery.result import AsyncResult
 
 logger = logging.getLogger(__name__)
@@ -97,6 +98,7 @@ async def get_job_status(job_id: str):
         job_id=job_id,
         status=result.status.lower(),
         result=payload,
+        logs=read_job_log_tail(job_id),
     )
 
 

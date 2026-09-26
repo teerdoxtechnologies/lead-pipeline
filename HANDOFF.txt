@@ -2307,6 +2307,22 @@ o_website follow-ups now use the new preview-specific subject/body pair for oll
   (total > 0), Run audits needs with_website > 0, Regenerate drafts
   needs existing drafts; each disabled title says why. Run full and
   Maps scrape stay idle-gated; Stop stays running-only.
+- Live run logs (user asked): worker buffers per-task log lines via
+  app/workers/task_logs.py (root handler, throttled flush every 20
+  lines/2s) to Redis lp:joblogs:{id} (7d TTL, best-effort, never
+  breaks tasks); wired via celery include. GET /jobs/{id}/status
+  returns logs (JobStatusResponse.logs). The tail shows in the raw job
+  payload dump in each Jobs section (no dedicated Logs field: it would
+  duplicate the dump). Tracked entries carry campaignId/
+  leadId so remounted pages re-attach to their latest non-silent job
+  (6h adoption window). Survives completion (finished-while-away view).
+  Covered by backend/tests/test_task_logs.py (14 tests).
+  2026-09-26 note: an early scrape showed no tail; live reconcile
+  tasks since write tails in the expected format, so the mechanism
+  works and that run predates the module. The after_setup_logger
+  re-attach stays as belt-and-braces. Backend tests are fail-closed
+  on Redis (suite once wrote lp:joblogs:inner/outer/t1 to the real
+  local Redis; removed).
 - Maps-data repair selection is exposed via components
   /RepairMapsDataDialog.tsx on the campaign detail page (replaces the
   direct-queue button): lead IDs first (comma-separated, blank means

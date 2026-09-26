@@ -6,7 +6,7 @@ import { api, type Outreach } from '../lib/api';
 import ConfirmSendDialog from '../components/ConfirmSendDialog';
 import EditContactDialog from '../components/EditContactDialog';
 import RepairMapsDataDialog from '../components/RepairMapsDataDialog';
-import { trackJob } from '../lib/jobs';
+import { getTrackedJobs, latestJobFor, trackJob } from '../lib/jobs';
 import { useSiteUrls } from '../lib/site';
 import { fmtDate, isActiveJob, relTime } from '../lib/format';
 import { isSent, leadPipeline, outreachFor } from '../lib/leadStage';
@@ -26,7 +26,9 @@ const fmtMs = (v: unknown): string => {
 export default function LeadPage() {
   const { leadId = '' } = useParams();
   const qc = useQueryClient();
-  const [lastJobId, setLastJobId] = useState('');
+  const [lastJobId, setLastJobId] = useState(
+    () => latestJobFor(getTrackedJobs(), { leadId })?.jobId ?? '',
+  );
   const [platform, setPlatform] = useState('gmail');
   const [pending, setPending] = useState<Outreach | null>(null);
   const [sending, setSending] = useState(false);
@@ -88,7 +90,10 @@ export default function LeadPage() {
   const onJob = (data: { job_id?: string }, action: string) => {
     if (data?.job_id) {
       setLastJobId(data.job_id);
-      trackJob(data.job_id, `${action} · ${str(lead?.business_name) || leadId}`);
+      trackJob(data.job_id, `${action} · ${str(lead?.business_name) || leadId}`, {
+        campaignId: campaignId || undefined,
+        leadId,
+      });
     }
     toast.success(`${action} started. Follow it in Jobs below.`);
     invalidate();

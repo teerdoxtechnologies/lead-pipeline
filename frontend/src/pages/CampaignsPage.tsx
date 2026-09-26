@@ -47,9 +47,11 @@ export default function CampaignsPage() {
 
   function create(e: React.FormEvent) {
     e.preventDefault();
-    if (!form.niche || !form.location) return;
+    const niche = form.niche.trim();
+    const location = form.location.trim();
+    if (!niche || !location) return;
     createMut.reset();
-    createMut.mutate(form);
+    createMut.mutate({ ...form, niche, location });
   }
 
   const errMsg =

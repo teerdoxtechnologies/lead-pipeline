@@ -8,7 +8,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, HttpUrl
+from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator
 
 
 # ---------------------------------------------------------------------------
@@ -80,6 +80,14 @@ class CampaignCreate(BaseModel):
     dedupe_enabled: Optional[bool] = None
     listing_media_enabled: Optional[bool] = None
     website_filter: Optional[Literal["no_website", "with_website", "all"]] = None
+
+    @field_validator("niche", "location")
+    @classmethod
+    def _strip_nonempty(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("must not be blank")
+        return stripped
 
 
 class CampaignStats(BaseModel):

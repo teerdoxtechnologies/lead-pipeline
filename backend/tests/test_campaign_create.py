@@ -57,6 +57,21 @@ class SlugCampaignNameTests(unittest.TestCase):
         self.assertEqual(_slug_campaign_name("Café", "Zürich"), "caf-z-rich")
 
 
+class CampaignCreateBlankTests(unittest.TestCase):
+    def test_blank_niche_or_location_rejected(self):
+        from pydantic import ValidationError
+
+        with self.assertRaises(ValidationError):
+            CampaignCreate(niche="   ", location="atlanta")
+        with self.assertRaises(ValidationError):
+            CampaignCreate(niche="cleaners", location="  ")
+
+    def test_padded_values_stripped(self):
+        body = CampaignCreate(niche="  cleaners  ", location=" atlanta ")
+        self.assertEqual(body.niche, "cleaners")
+        self.assertEqual(body.location, "atlanta")
+
+
 class CreateCampaignUniquenessTests(unittest.TestCase):
     def test_unique_name_creates_doc_with_slug_id(self):
         body = CampaignCreate(niche="House Cleaners", location="New York")

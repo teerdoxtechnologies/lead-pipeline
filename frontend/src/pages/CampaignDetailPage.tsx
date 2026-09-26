@@ -15,6 +15,8 @@ const RUNNING = new Set(['running', 'analyzing']);
 const LIVE = new Set(['running', 'analyzing', 'pending', 'scraped']);
 const PAGE_SIZE = 25;
 
+const SELECTION_ACTIONS: ReadonlySet<string> = new Set(['mark', 'unmark', 'build', 'publish']);
+
 function draftsByLead(items: Outreach[]): Map<string, Outreach[]> {
   const m = new Map<string, Outreach[]>();
   for (const d of items) {
@@ -45,6 +47,7 @@ export default function CampaignDetailPage() {
   const [repairOpen, setRepairOpen] = useState(false);
   const [leadSel, setLeadSel] = useState<string[]>([]);
   const [badIds, setBadIds] = useState<string[]>([]);
+  const [bulkAction, setBulkAction] = useState('');
 
   const listQ = useQuery({
     queryKey: ['campaigns', ''],
@@ -115,9 +118,15 @@ export default function CampaignDetailPage() {
   const cancelMut = useMutation({ mutationFn: () => api.cancel(id), onSuccess: invalidate });
   const auditMut = useMutation({ mutationFn: () => api.auditWebsites(id, {}), onSuccess: (d) => onJob(d, 'Run audits') });
   const regenMut = useMutation({ mutationFn: () => api.regenerateDrafts(id), onSuccess: (d) => onJob(d, 'Regenerate drafts') });
-  const repairWebsitesMut = useMutation({ mutationFn: () => api.repairWebsites(id), onSuccess: (d) => onJob(d, 'Repair websites') });
+  const repairWebsitesMut = useMutation({
+    mutationFn: () => api.repairWebsites(id, activeSel.length ? { lead_ids: activeSel.join(',') } : undefined),
+    onSuccess: (d) => onJob(d, 'Repair websites'),
+  });
   const syncNotionMut = useMutation({ mutationFn: () => api.syncNotion(id), onSuccess: (d) => onJob(d, 'Sync Notion') });
-  const genDraftsMut = useMutation({ mutationFn: () => api.generateOutreachDrafts(id), onSuccess: (d) => onJob(d, 'Generate drafts') });
+  const genDraftsMut = useMutation({
+    mutationFn: () => api.generateOutreachDrafts(id, activeSel.length ? { lead_ids: activeSel } : undefined),
+    onSuccess: (d) => onJob(d, 'Generate drafts'),
+  });
   const markMut = useMutation({
     mutationFn: (value: boolean) => api.markWebsites(id, { lead_ids: activeSel, needs_website: value }),
     onSuccess: (r, value) => {
@@ -197,6 +206,35 @@ export default function CampaignDetailPage() {
     return leads.filter((l) => activeSel.includes(String(l.id)));
   }
 
+  function applyBulk() {
+    if (!bulkAction) {
+      toast.warning('Pick a bulk action first.');
+      return;
+    }
+    if (SELECTION_ACTIONS.has(bulkAction) && !activeSel.length) {
+      toast.warning('Select rows first.');
+      return;
+    }
+    if (bulkAction === 'mark') markMut.mutate(true);
+    else if (bulkAction === 'unmark') markMut.mutate(false);
+    else if (bulkAction === 'build') queueBuild();
+    else if (bulkAction === 'publish') queuePublish();
+    else if (bulkAction === 'drafts') genDraftsMut.mutate();
+    else if (bulkAction === 'repairmaps') setRepairOpen(true);
+    else if (bulkAction === 'repairwebsites') repairWebsitesMut.mutate();
+    else if (bulkAction === 'syncnotion') syncNotionMut.mutate();
+    else if (bulkAction === 'cleanup') runCleanup(true);
+  }
+
+  const bulkBusy =
+    markMut.isPending ||
+    buildMut.isPending ||
+    publishMut.isPending ||
+    genDraftsMut.isPending ||
+    repairWebsitesMut.isPending ||
+    syncNotionMut.isPending ||
+    cleanBusy;
+
   function queueBuild() {
     const rows = selectedRows();
     const unmarked = rows.filter((l) => !l.needs_website);
@@ -228,14 +266,15 @@ export default function CampaignDetailPage() {
   }
 
   const wc = candidatesQ.data?.workflow_counts as Record<string, number> | undefined;
-  const nextSteps = candidatesQ.data?.next_steps;
-  const nextStepsText = Array.isArray(nextSteps) ? nextSteps.join(' ') : (nextSteps ?? '');
 
   async function runCleanup(dryRun: boolean) {
     setCleanBusy(true);
     setCleanErr('');
     try {
-      const r = await api.cleanupWebsites(id, { dry_run: dryRun });
+      const r = await api.cleanupWebsites(id, {
+        dry_run: dryRun,
+        ...(activeSel.length ? { lead_ids: activeSel } : {}),
+      });
       setCleanResult(r);
       if (!dryRun) {
         toast.success(
@@ -312,7 +351,11 @@ export default function CampaignDetailPage() {
         {(websiteFilter === 'no_website' || websiteFilter === 'all') && (
           <StatCard label="No website" value={num(s?.missing_website)} hint="build targets" tone="warn" />
         )}
-        <StatCard label="Analyzed" value={num(s?.analyzed)} hint={`of ${num(s?.total)} leads · audit + no-site reports`} />
+        {websiteFilter === 'no_website' ? (
+          <StatCard label="Not marked" value={num(wc?.not_marked_needs_website ?? candidatesQ.data?.not_marked_needs_website)} hint="needs_website flag off" tone="warn" />
+        ) : (
+          <StatCard label="Analyzed" value={num(s?.analyzed)} hint={`of ${num(s?.total)} leads · audit + no-site reports`} />
+        )}
         <StatCard
           label="Emailed"
           value={num(s?.emailed)}
@@ -323,7 +366,9 @@ export default function CampaignDetailPage() {
 
       <Section
         title="Follow-ups and sites"
-        hint="Derived from this campaign's outreach drafts and website builds. Analyzed above already counts every saved report (audits for leads with sites, no-site reports for the rest)."
+        hint={websiteFilter === 'no_website'
+          ? "Derived from this campaign's outreach drafts and website builds."
+          : "Derived from this campaign's outreach drafts and website builds. Analyzed above already counts every saved report (audits for leads with sites, no-site reports for the rest)."}
       >
         {(() => {
           const ds = draftsQ.data ?? [];
@@ -395,17 +440,28 @@ export default function CampaignDetailPage() {
           <button className="ghost btn-sm" onClick={() => { setBadIds([]); setLeadSel([]); }} disabled={!activeSel.length}>
             Clear
           </button>
-          <button className="ghost btn-sm" onClick={() => markMut.mutate(true)} disabled={!activeSel.length || markMut.isPending}>
-            {markMut.isPending ? 'Marking…' : 'Mark for build'}
-          </button>
-          <button className="ghost btn-sm" onClick={() => markMut.mutate(false)} disabled={!activeSel.length || markMut.isPending}>
-            Unmark
-          </button>
-          <button className="ghost btn-sm" onClick={queueBuild} disabled={!activeSel.length || buildMut.isPending}>
-            {buildMut.isPending ? 'Queuing…' : 'Build previews'}
-          </button>
-          <button className="ghost btn-sm" onClick={queuePublish} disabled={!activeSel.length || publishMut.isPending}>
-            {publishMut.isPending ? 'Queuing…' : 'Publish'}
+          <select
+            aria-label="Bulk actions"
+            value={bulkAction}
+            onChange={(e) => setBulkAction(e.target.value)}
+          >
+            <option value="">Bulk actions</option>
+            <option value="mark">Mark for build</option>
+            <option value="unmark">Unmark</option>
+            <option value="build">Build previews</option>
+            <option value="publish">Publish</option>
+            <option value="drafts">Generate drafts</option>
+            <option value="repairmaps">Repair Maps data</option>
+            <option value="repairwebsites">Repair websites</option>
+            <option value="syncnotion">Sync Notion</option>
+            <option value="cleanup">Preview cleanup</option>
+          </select>
+          <button
+            className="ghost btn-sm"
+            onClick={applyBulk}
+            disabled={!bulkAction || bulkBusy || (SELECTION_ACTIONS.has(bulkAction) && !activeSel.length)}
+          >
+            {bulkBusy ? 'Working…' : 'Apply'}
           </button>
         </div>
         <div className="table-wrap">
@@ -506,94 +562,43 @@ export default function CampaignDetailPage() {
             Next
           </button>
         </div>
-      </Section>
-
-      <Section
-        title="Website pipeline"
-        hint="Who still needs a generated site, and what the builder says to do next."
-        action={candidatesQ.isLoading ? <span className="faint small">loading…</span> : null}
-      >
-        {candidatesQ.data ? (
+        {cleanErr ? <div className="err" role="alert" style={{ marginTop: 12 }}>{cleanErr}</div> : null}
+        {cleanResult && (
           <>
-            <div className="stat-grid" role="group" aria-label="Website buckets" style={{ marginBottom: 14 }}>
-              <StatCard label="No-website leads" value={num(candidatesQ.data.total_no_website_leads)} />
-              <StatCard label="Missing email" value={num(wc?.missing_email ?? candidatesQ.data.missing_email)} hint="blocked until email added" tone="warn" />
-              <StatCard label="Not marked" value={num(wc?.not_marked_needs_website ?? candidatesQ.data.not_marked_needs_website)} hint="needs_website flag off" />
-              <StatCard label="Ready to build" value={num(typeof candidatesQ.data.ready_to_build === 'number' ? candidatesQ.data.ready_to_build : wc?.ready_to_build)} tone="info" />
-              <StatCard label="Preview built" value={num(wc?.preview_built ?? candidatesQ.data.preview_built)} tone="info" />
-              <StatCard label="Hosted" value={num(wc?.hosted ?? candidatesQ.data.hosted)} tone="ok" />
+            <div className="stat-grid" role="group" aria-label="Cleanup result" style={{ marginTop: 12 }}>
+              <StatCard label="Checked" value={num(cleanResult.checked)} hint="leads scanned" />
+              <StatCard
+                label={cleanResult.dry_run ? 'Would remove' : 'Removed'}
+                value={num(cleanResult.dry_run ? cleanResult.eligible : cleanResult.removed)}
+                hint="closed leads + artifacts"
+                tone={(cleanResult.dry_run ? cleanResult.eligible : cleanResult.removed) ? 'warn' : undefined}
+              />
+              <StatCard label="Skipped" value={num(cleanResult.skipped)} hint="not eligible" />
+              <StatCard label="Failed" value={num(cleanResult.failed)} hint="needs attention" tone={cleanResult.failed ? 'danger' : undefined} />
             </div>
-            {nextStepsText ? <p className="small muted">{nextStepsText}</p> : null}
-            <div className="action-row">
-              <button className="ghost btn-sm" onClick={() => runCleanup(true)} disabled={cleanBusy}>
-                {cleanBusy ? 'Working…' : 'Preview cleanup'}
-              </button>
-              <span className="why">Dry run first: lists closed leads and stale artifacts without deleting anything.</span>
-            </div>
-            {cleanErr ? <div className="err" role="alert" style={{ marginTop: 12 }}>{cleanErr}</div> : null}
-            {cleanResult && (
-              <>
-                <div className="stat-grid" role="group" aria-label="Cleanup result" style={{ marginTop: 12 }}>
-                  <StatCard label="Checked" value={num(cleanResult.checked)} hint="leads scanned" />
-                  <StatCard
-                    label={cleanResult.dry_run ? 'Would remove' : 'Removed'}
-                    value={num(cleanResult.dry_run ? cleanResult.eligible : cleanResult.removed)}
-                    hint="closed leads + artifacts"
-                    tone={(cleanResult.dry_run ? cleanResult.eligible : cleanResult.removed) ? 'warn' : undefined}
-                  />
-                  <StatCard label="Skipped" value={num(cleanResult.skipped)} hint="not eligible" />
-                  <StatCard label="Failed" value={num(cleanResult.failed)} hint="needs attention" tone={cleanResult.failed ? 'danger' : undefined} />
-                </div>
-                {(cleanResult.gmail_drafts_deleted ?? 0) > 0 || (cleanResult.static_paths_removed ?? 0) > 0 || (cleanResult.notion_archived ?? 0) > 0 ? (
-                  <p className="small muted" style={{ marginTop: 8 }}>
-                    Gmail drafts deleted: <strong className="num">{num(cleanResult.gmail_drafts_deleted)}</strong>
-                    {' · '}static paths removed: <strong className="num">{num(cleanResult.static_paths_removed)}</strong>
-                    {' · '}Notion archived: <strong className="num">{num(cleanResult.notion_archived)}</strong>
-                  </p>
-                ) : null}
-                {cleanResult.dry_run && (cleanResult.eligible ?? 0) > 0 ? (
-                  <div className="action-row">
-                    <button className="danger btn-sm" onClick={() => runCleanup(false)} disabled={cleanBusy}>
-                      Delete {num(cleanResult.eligible)} flagged items
-                    </button>
-                    <span className="why">Removes leads, outreach, reports, Gmail drafts and static files. Cannot be undone.</span>
-                  </div>
-                ) : null}
-              </>
-            )}
+            {(cleanResult.gmail_drafts_deleted ?? 0) > 0 || (cleanResult.static_paths_removed ?? 0) > 0 || (cleanResult.notion_archived ?? 0) > 0 ? (
+              <p className="small muted" style={{ marginTop: 8 }}>
+                Gmail drafts deleted: <strong className="num">{num(cleanResult.gmail_drafts_deleted)}</strong>
+                {' · '}static paths removed: <strong className="num">{num(cleanResult.static_paths_removed)}</strong>
+                {' · '}Notion archived: <strong className="num">{num(cleanResult.notion_archived)}</strong>
+              </p>
+            ) : null}
+            {cleanResult.dry_run && (cleanResult.eligible ?? 0) > 0 ? (
+              <div className="action-row">
+                <button className="danger btn-sm" onClick={() => runCleanup(false)} disabled={cleanBusy}>
+                  Delete {num(cleanResult.eligible)} flagged items
+                </button>
+                <span className="why">Removes leads, outreach, reports, Gmail drafts and static files. Cannot be undone.</span>
+              </div>
+            ) : null}
           </>
-        ) : candidatesQ.isLoading ? (
-          <p className="muted small">Loading website pipeline…</p>
-        ) : (
-          <EmptyState title="No website data" body="The website pipeline endpoint did not return data." />
         )}
       </Section>
 
-      <Section
-        title="Repairs, drafts & sync"
-        hint="One-off tools: re-check Maps data, fix website flags, generate missing drafts, and re-sync Notion."
-      >
-        <div className="row" style={{ flexWrap: 'wrap', gap: 10 }}>
-          <button className="ghost btn-sm" onClick={() => genDraftsMut.mutate()} disabled={genDraftsMut.isPending}>
-            {genDraftsMut.isPending ? 'Queuing…' : 'Generate drafts'}
-          </button>
-          <button className="ghost btn-sm" onClick={() => setRepairOpen(true)}>
-            Repair Maps data
-          </button>
-          <button className="ghost btn-sm" onClick={() => repairWebsitesMut.mutate()} disabled={repairWebsitesMut.isPending}>
-            {repairWebsitesMut.isPending ? 'Queuing…' : 'Repair websites'}
-          </button>
-          <button className="ghost btn-sm" onClick={() => syncNotionMut.mutate()} disabled={syncNotionMut.isPending}>
-            {syncNotionMut.isPending ? 'Queuing…' : 'Sync Notion'}
-          </button>
-        </div>
-        <p className="small muted" style={{ marginTop: 8 }}>
-          Generate drafts fills gaps for published sites with no outreach yet. Repairs re-derive website flags and Maps fields.
-        </p>
-      </Section>
       {repairOpen && (
         <RepairMapsDataDialog
           campaignId={id}
+          initialLeadIds={activeSel.length ? activeSel.join(', ') : undefined}
           onClose={() => setRepairOpen(false)}
           onQueued={(d) => { onJob(d, 'Repair Maps data'); setRepairOpen(false); }}
         />

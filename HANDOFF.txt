@@ -2312,8 +2312,8 @@ o_website follow-ups now use the new preview-specific subject/body pair for oll
   lines/2s) to Redis lp:joblogs:{id} (7d TTL, best-effort, never
   breaks tasks); wired via celery include. GET /jobs/{id}/status
   returns logs (JobStatusResponse.logs). The tail shows in the raw job
-  payload dump in each Jobs section (no dedicated Logs field: it would
-  duplicate the dump). Tracked entries carry campaignId/
+  payload dump in each Jobs section (collapsible details element, no
+  dedicated Logs field: it would duplicate the dump). Tracked entries carry campaignId/
   leadId so remounted pages re-attach to their latest non-silent job
   (6h adoption window). Survives completion (finished-while-away view).
   Covered by backend/tests/test_task_logs.py (14 tests).
@@ -2323,6 +2323,24 @@ o_website follow-ups now use the new preview-specific subject/body pair for oll
   re-attach stays as belt-and-braces. Backend tests are fail-closed
   on Redis (suite once wrote lp:joblogs:inner/outer/t1 to the real
   local Redis; removed).
+- Big-brand exclusion (user asked, exact-only): app/workers/
+  brand_filter.py holds EXCLUDED_BRANDS (~70 nationals/franchises)
+  with exact matching on compacted names plus a leading-the strip.
+  Card time skips all further work for hits (brand_skipped); persist
+  drops stragglers pre-dedupe (brand_filtered, flattened to status).
+  Gray areas deliberately NOT seeded: co-ops (Ace/True Value),
+  insurance agencies, realty brokerages, dealerships.
+- Scrape speed: no_website runs pass skip_reviews_for_with_website
+  through scrape_google_maps_with_metrics -> _scroll_and_collect ->
+  _extract_visible_articles; with-website listings skip the review
+  phase (~50s of ~60s per listing) but stay counted. Kept leads keep
+  full reviews. Predicate parity between layers pinned by
+  test_predicates_agree (maps_scraper cannot import tasks:
+  circular). Measured baseline: 116 listings in ~88 min, ~45-70s
+  each, ~2s gaps. Also observed: duplicate card extraction
+  (ScanShield twice) and suspect stale review counts (2495 twice)
+  still open.
+  Covered by backend/tests/test_brand_filter.py (6 tests).
 - Maps-data repair selection is exposed via components
   /RepairMapsDataDialog.tsx on the campaign detail page (replaces the
   direct-queue button): lead IDs first (comma-separated, blank means

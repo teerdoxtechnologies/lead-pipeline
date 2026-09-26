@@ -51,6 +51,7 @@ from app.services.audit_report_artifacts import audit_reports_root, write_audit_
 from app.services.google_calendar_service import sync_follow_up_calendar_event
 from app.services.outreach_history import append_message_history
 from app.services.website_filters import is_non_official_website
+from app.workers.brand_filter import is_excluded_brand
 
 logger = logging.getLogger(__name__)
 
@@ -1304,7 +1305,15 @@ def _scrape_and_persist_maps_leads(
     logger.info("[Step 1] Scraping Google Maps for '%s in %s'", niche, location)
     try:
         businesses, maps_metrics = asyncio.run(
-            _scrape_maps_with_metrics(niche, location, max_results=max_results, campaign_id=campaign_id)
+            _scrape_maps_with_metrics(
+                niche,
+                location,
+                max_results=max_results,
+                campaign_id=campaign_id,
+                skip_reviews_for_with_website=(
+                    selected_settings["website_filter"] == "no_website"
+                ),
+            )
         )
     except asyncio.CancelledError as exc:
         raise CampaignCancelled(f"Campaign {campaign_id} was cancelled during Maps scrape.") from exc
@@ -2003,6 +2012,7 @@ def _persist_raw_leads(
         "existing_leads_reused": 0,
         "global_duplicates_skipped": 0,
         "website_filtered": 0,
+        "brand_filtered": 0,
         "missing_website": 0,
         "with_website": 0,
         "leads_validated": 0,
@@ -2040,6 +2050,9 @@ def _persist_raw_leads(
         has_website = bool(website)
         if not _website_allowed(has_website, website_filter):
             persist_metrics["website_filtered"] += 1
+            continue
+        if is_excluded_brand(business_name):
+            persist_metrics["brand_filtered"] += 1
             continue
         dedupe_keys = _lead_dedupe_keys(
             business_name,
@@ -2307,6 +2320,7 @@ async def _scrape_maps_with_metrics(
     location: str,
     max_results: Optional[int] = None,
     campaign_id: Optional[str] = None,
+    skip_reviews_for_with_website: bool = False,
 ) -> tuple[List[Dict[str, Any]], Dict[str, Any]]:
     from app.services.maps_scraper import scrape_google_maps_with_metrics
     async def cancel_check() -> None:
@@ -2321,6 +2335,7 @@ async def _scrape_maps_with_metrics(
         location,
         max_results=max_results,
         cancel_check=cancel_check if campaign_id else None,
+        skip_reviews_for_with_website=skip_reviews_for_with_website,
     )
 
 

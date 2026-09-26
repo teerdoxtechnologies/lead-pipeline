@@ -702,7 +702,10 @@ export default function LeadPage() {
               <Field label="Task id"><span className="mono">{lastJobId}</span></Field>
               <Field label="State"><StatusPill status={jobQ.data.status} /></Field>
             </Fields>
-            <pre className="dump">{JSON.stringify(jobQ.data, null, 2)}</pre>
+            <details className="dump-wrap">
+              <summary>Raw job payload</summary>
+              <pre className="dump">{JSON.stringify(jobQ.data, null, 2)}</pre>
+            </details>
           </>
         )}
       </Section>

@@ -229,6 +229,7 @@ export interface CampaignStatus extends Record<string, unknown> {
   with_website?: number;
   missing_website?: number;
   website_filtered?: number;
+  brand_filtered?: number;
   stop_reason?: string | null;
 }
 

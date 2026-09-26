@@ -27,6 +27,7 @@ from playwright.async_api import (
 
 from app.config import get_settings
 from app.services.website_filters import is_non_official_website
+from app.workers.brand_filter import is_excluded_brand
 
 logger = logging.getLogger(__name__)
 
@@ -277,6 +278,7 @@ async def scrape_google_maps_with_metrics(
     location: str,
     max_results: Optional[int] = None,
     cancel_check: Optional[Callable[[], Awaitable[None]]] = None,
+    skip_reviews_for_with_website: bool = False,
 ) -> tuple[List[Dict[str, Any]], Dict[str, Any]]:
     """Scrape Google Maps and return businesses plus run metrics."""
     settings = get_settings()
@@ -292,6 +294,8 @@ async def scrape_google_maps_with_metrics(
         "name_failures": 0,
         "failed_card_samples": [],
         "stop_reason": None,
+        "brand_skipped": 0,
+        "reviews_skipped_website": 0,
         "result_limit": max_results or settings.max_maps_results,
         "max_maps_results_used": max_results or settings.max_maps_results,
     }
@@ -371,6 +375,7 @@ async def scrape_google_maps_with_metrics(
                 max_results=metrics["result_limit"],
                 metrics=metrics,
                 cancel_check=cancel_check,
+                skip_reviews_for_with_website=skip_reviews_for_with_website,
             )
 
         except asyncio.CancelledError:
@@ -398,6 +403,7 @@ async def _scroll_and_collect(
     max_results: int,
     metrics: Dict[str, Any],
     cancel_check: Optional[Callable[[], Awaitable[None]]] = None,
+    skip_reviews_for_with_website: bool = False,
 ) -> List[Dict[str, Any]]:
     """Scroll the feed and collect visible cards as Google Maps virtualizes them."""
     feed = page.locator("div[role='feed']")
@@ -430,6 +436,7 @@ async def _scroll_and_collect(
             max_results,
             metrics,
             cancel_check=cancel_check,
+            skip_reviews_for_with_website=skip_reviews_for_with_website,
         )
         added_count = len(listings) - before_count
         logger.info(
@@ -471,6 +478,7 @@ async def _scroll_and_collect(
             max_results,
             metrics,
             cancel_check=cancel_check,
+            skip_reviews_for_with_website=skip_reviews_for_with_website,
         )
         logger.info(
             "Collected %d new businesses in final pass (%d total).",
@@ -499,6 +507,7 @@ async def _extract_visible_articles(
     max_results: int,
     metrics: Dict[str, Any],
     cancel_check: Optional[Callable[[], Awaitable[None]]] = None,
+    skip_reviews_for_with_website: bool = False,
 ) -> None:
     """Extract currently mounted article cards and append unseen businesses."""
     article_locator = page.locator("div[role='article']")
@@ -555,6 +564,12 @@ async def _extract_visible_articles(
                 continue
             logger.info("Google Maps detail panel opened for %s.", name)
 
+            # Big-brand exclusion: never prospects, skip all further work.
+            if is_excluded_brand(name):
+                metrics["brand_skipped"] = int(metrics.get("brand_skipped") or 0) + 1
+                logger.info("Skipping excluded brand %s.", name)
+                continue
+
             # Detail fields (address, phone, website all come from these divs).
             # Maps often renders these rows progressively after the H1 appears,
             # so wait for the set to stabilize before parsing.
@@ -563,16 +578,27 @@ async def _extract_visible_articles(
 
             parsed = _parse_fields(raw_data)
             parsed["google_maps_url"] = page.url
-            logger.info("Fetching Google rating and reviews for %s.", name)
-            rating_data = await _extract_rating_and_reviews(page, business_name=name)
-            parsed.update(rating_data)
-            logger.info(
-                "Fetched Google rating/reviews for %s: rating=%s total_reviews=%s fetched_reviews=%s.",
-                name,
-                parsed.get("google_rating") or "none",
-                parsed.get("google_review_count") if parsed.get("google_review_count") is not None else "unknown",
-                len(parsed.get("google_reviews") or []),
+            skip_reviews = skip_reviews_for_with_website and _is_own_website(
+                parsed.get("website") or ""
             )
+            if skip_reviews:
+                metrics["reviews_skipped_website"] = int(
+                    metrics.get("reviews_skipped_website") or 0
+                ) + 1
+                logger.info(
+                    "Skipping reviews for with-website listing %s.", name
+                )
+            else:
+                logger.info("Fetching Google rating and reviews for %s.", name)
+                rating_data = await _extract_rating_and_reviews(page, business_name=name)
+                parsed.update(rating_data)
+                logger.info(
+                    "Fetched Google rating/reviews for %s: rating=%s total_reviews=%s fetched_reviews=%s.",
+                    name,
+                    parsed.get("google_rating") or "none",
+                    parsed.get("google_review_count") if parsed.get("google_review_count") is not None else "unknown",
+                    len(parsed.get("google_reviews") or []),
+                )
 
             key = _listing_key(parsed)
             if not key:

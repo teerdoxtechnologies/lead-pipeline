@@ -510,7 +510,12 @@ export default function CampaignDetailPage() {
             <Field label="State"><StatusPill status={job.status} /></Field>
           </Fields>
         )}
-        {job && <pre className="dump">{JSON.stringify(job, null, 2)}</pre>}
+        {job && (
+          <details className="dump-wrap">
+            <summary>Raw job payload</summary>
+            <pre className="dump">{JSON.stringify(job, null, 2)}</pre>
+          </details>
+        )}
       </Section>
 
       <Section title="Campaign record" hint="Identifiers, timestamps and the raw status payload.">

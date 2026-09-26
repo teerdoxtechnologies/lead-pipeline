@@ -51,7 +51,6 @@ def get_db() -> Any:
 # ---------------------------------------------------------------------------
 
 CAMPAIGNS = "campaigns"
-CAMPAIGN_NAMES = "campaign_names"
 LEADS = "leads"
 AUDIT_REPORTS = "audit_reports"
 NO_WEBSITE_REPORTS = "no_website_reports"

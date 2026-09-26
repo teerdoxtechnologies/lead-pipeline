@@ -30,7 +30,6 @@ async def get_runtime_config():
         "global_lead_dedupe_enabled": settings.global_lead_dedupe_enabled,
         "max_maps_results": settings.max_maps_results,
         "playwright_headless": settings.playwright_headless,
-        "gmail_delete_drafts_on_campaign_delete": settings.gmail_delete_drafts_on_campaign_delete,
         "google_calendar": {
             "follow_up_reminders_enabled": settings.google_calendar_follow_up_reminders_enabled,
             "calendar_id": settings.google_calendar_id,

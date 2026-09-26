@@ -32,7 +32,6 @@ class Settings(BaseSettings):
     gmail_credentials_path: str = "./credentials.json"
     gmail_token_path: str = "./token.json"
     gmail_sender_email: str = ""
-    gmail_delete_drafts_on_campaign_delete: bool = False
     outreach_follow_up_interval_days: int = 3
     outreach_follow_up_2_interval_days: int = 7
     outreach_max_follow_ups: int = 2

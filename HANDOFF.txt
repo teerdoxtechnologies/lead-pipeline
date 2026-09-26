@@ -2256,8 +2256,11 @@ o_website follow-ups now use the new preview-specific subject/body pair for oll
   and the success toast carries the next step instead: 'Campaign "X"
   created. Open it and press Run full to start scraping.' The scrape only
   starts from the detail page (Run full / Scrape).   The server generates the campaign name from niche and location as
-  {niche}-{location} (lowercased, whitespace becomes dashes, no spaces;
-  scrape.py _slug_campaign_name). The create form and CampaignCreate schema
+  {niche}-{location} using search-query normalization (lowercase,
+  non-letter runs become one dash, English letters only; scrape.py
+  _slug_campaign_name mirrors _compact_text). Slug identity always
+  matches query identity, so variants collide to the same name and
+  409. The create form and CampaignCreate schema
   take only niche and location; CampaignResponse still returns name.
   The transactional insert stamps created_at/updated_at (SERVER_TIMESTAMP),
   matching the old add_document semantics. This is load-bearing: the list
@@ -2268,14 +2271,13 @@ o_website follow-ups now use the new preview-specific subject/body pair for oll
   The main campaigns page has no stat row (removed entirely, with its
   overview rollup); per-campaign stats live on the detail page.
   Names are unique: creating a campaign whose slug matches any existing
-  campaign returns 409 'Campaign "<slug>" already exists.' Uniqueness is
-  transaction-backed: the insert writes the campaign doc plus a reservation
-  doc in collection campaign_names (doc ID = URL-quoted slug) in one
-  Firestore transaction, so concurrent duplicate creates cannot both
-  commit. The pre-insert name query stays as the fast path and covers
-  pre-existing rows that have no reservation. Deleting a campaign releases
-  its reservation, freeing the name. Covered by
-  backend/tests/test_campaign_create.py (9 tests).
+  campaign returns 409 'Campaign "<slug>" already exists.' The slug IS
+  the document ID, so duplicates are structurally impossible: document
+  create fails atomically on conflict (AlreadyExists mapped to 409).
+  No pre-check query, no transaction, no reservation collection.
+  Legacy auto-ID rows are gone by user cleanup. Covered by
+  backend/tests/test_campaign_create.py (create conflict, slug-ID
+  creation).
 - Website filter (no-website focus): campaigns carry scrape_settings
   .website_filter, one of no_website / with_website / all. CampaignCreate
   accepts it (Literal, 422 otherwise); unset or garbage falls back to the
@@ -2415,6 +2417,7 @@ o_website follow-ups now use the new preview-specific subject/body pair for oll
     campaign-name gate is client-side UX only. The server tombstones first
     (status=deleting, rows hidden immediately) before the background purge;
     see the "Tombstone-first delete flow" entry in the Campaign cleanup
+    see the "Tombstone-first delete flow" entry in the Campaign cleanup
     section. Server 4xx (blocked/confirm) surfaces in the dialog's .err
     slot. On success the toast states the deletion as fact with names
     (single: Campaign "X" deleted.; N>1: N campaigns deleted: A, B.),
@@ -2422,7 +2425,21 @@ o_website follow-ups now use the new preview-specific subject/body pair for oll
     (trackJob { silent: true }, no completion toasts from JobWatcher,
     polling and invalidation continue). Rows vanish immediately via
     the tombstone, so the wording is true in the UI: page clears
-    selection and invalidates.
+    selection and     invalidates. The purge also deletes Cloudinary
+    listing media and review avatars best-effort
+    (_delete_campaign_cloudinary_media, covered by
+    backend/tests/test_media_cleanup.py); failures log, never block.
+    Full-trace purge (user rule: no orphan traces): _delete_campaign_doc
+    additionally removes published/local static artifacts (audit pages +
+    generated sites, root-guarded, then git commit+push so URLs go dark),
+    Gmail drafts unconditionally (the
+    gmail_delete_drafts_on_campaign_delete setting is gone), and saved
+    export bundles containing the campaign (matched via the in-zip
+    summary; mixed bundles go too, they regenerate; retention would
+    sweep them anyway). Covered by backend/tests/test_purge_traces.py
+    (8 tests). Deliberately NOT purged: search evidence cache (shared
+    by normalized query across campaigns), Notion pages (API archival
+    is trash, the max available).
     Verified: dialog opens in ~0.2s (was 27s), warning glyph + red top edge
     render, 0 cleanup-preview requests, exact-name gate works for 1 and 2
     campaigns, 0 console errors.

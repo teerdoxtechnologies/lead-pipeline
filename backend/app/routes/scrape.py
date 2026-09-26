@@ -7,21 +7,24 @@ Campaign routes:
 """
 from __future__ import annotations
 
+import json
 import logging
 import re
+import shutil
 import uuid
+import zipfile
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any, Literal
-from urllib.parse import quote
 
 from fastapi import APIRouter, HTTPException, Query, status
 from firebase_admin import firestore
+from google.api_core.exceptions import AlreadyExists
 
 from app.config import get_settings
 from app.firebase import (
     AUDIT_REPORTS,
     CAMPAIGNS,
-    CAMPAIGN_NAMES,
     EMAIL_DRAFTS,
     LEADS,
     NO_WEBSITE_REPORTS,
@@ -103,43 +106,14 @@ async def get_job_status(job_id: str):
 
 
 def _slug_campaign_name(niche: str, location: str) -> str:
-    """Build the campaign name as ``{niche}-{location}`` with no spaces."""
-    slug = re.sub(r"\s+", "-", f"{niche.strip()}-{location.strip()}".lower())
-    slug = re.sub(r"-{2,}", "-", slug).strip("-")
-    return slug or "campaign"
+    """Build the campaign name as ``{niche}-{location}``, English letters only.
 
-
-def _campaign_name_key(name: str) -> str:
-    """Firestore doc ID reserving a campaign name (collision-free)."""
-    return quote(name, safe="-")
-
-
-@firestore.transactional
-def _insert_campaign_with_unique_name(transaction, data: dict, name: str) -> str:
-    """Insert the campaign doc and reserve its name in one transaction.
-
-    The reservation doc makes the uniqueness check atomic: two concurrent
-    creates for the same name cannot both commit (the loser aborts on the
-    reservation conflict and retries into the 409 below).
+    Uses the same normalization as search queries (_compact_text in
+    serpapi_service: lowercase, non-letter runs become one dash),
+    so slug identity always matches query identity.
     """
-    db = get_db()
-    name_ref = db.collection(CAMPAIGN_NAMES).document(_campaign_name_key(name))
-    if name_ref.get(transaction=transaction).exists:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=f'Campaign "{name}" already exists.',
-        )
-    campaign_ref = db.collection(CAMPAIGNS).document()
-    transaction.set(campaign_ref, data)
-    transaction.set(
-        name_ref,
-        {
-            "campaign_id": campaign_ref.id,
-            "name": name,
-            "created_at": firestore.SERVER_TIMESTAMP,
-        },
-    )
-    return campaign_ref.id
+    slug = re.sub(r"\s+", "-", re.sub(r"[^a-z]+", " ", f"{niche}-{location}".lower()))
+    return slug.strip("-") or "campaign"
 
 
 @router.post(
@@ -151,19 +125,13 @@ def _insert_campaign_with_unique_name(transaction, data: dict, name: str) -> str
 async def create_campaign(body: CampaignCreate):
     """
     Create a new scraping campaign for a given niche and location.
-    The name is generated as ``{niche}-{location}`` (no spaces) and must be
-    unique: recreating an existing campaign name returns 409. Uniqueness is
-    enforced atomically via a name reservation doc, so concurrent duplicate
-    creates cannot both succeed.
+    The name is generated as ``{niche}-{location}`` (English letters
+    only) and is the document ID, so duplicates are structurally
+    impossible: a lost race fails on create with a friendly 409.
     The campaign starts in *pending* state; call ``/scrape`` or ``/run-full``
     to kick off processing.
     """
     name = _slug_campaign_name(body.niche, body.location)
-    if query_collection(CAMPAIGNS, filters=[("name", "==", name)], limit=1):
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=f'Campaign "{name}" already exists.',
-        )
     logger.info(
         "[Campaign API] Creating campaign name=%s niche=%s location=%s max_results=%s dedupe=%s listing_media=%s website_filter=%s",
         name,
@@ -199,18 +167,24 @@ async def create_campaign(body: CampaignCreate):
             "website_filter": body.website_filter,
         },
     }
-    doc_id = _insert_campaign_with_unique_name(get_db().transaction(), data, name)
-    doc = get_document(CAMPAIGNS, doc_id)
+    try:
+        get_db().collection(CAMPAIGNS).document(name).create(data)
+    except AlreadyExists as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f'Campaign "{name}" already exists.',
+        ) from exc
+    doc = get_document(CAMPAIGNS, name)
     if doc is None:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to retrieve created campaign.",
         )
-    notion_page_id = get_notion_sync().sync_campaign(doc_id, doc)
+    notion_page_id = get_notion_sync().sync_campaign(name, doc)
     if notion_page_id:
-        update_document(CAMPAIGNS, doc_id, {"notion_page_id": notion_page_id})
+        update_document(CAMPAIGNS, name, {"notion_page_id": notion_page_id})
         doc["notion_page_id"] = notion_page_id
-    logger.info("[Campaign API] Created campaign %s.", doc_id)
+    logger.info("[Campaign API] Created campaign %s.", name)
     return _serialise_campaign(doc)
 
 
@@ -1109,6 +1083,190 @@ def _archive_notion_page(doc: dict) -> None:
         get_notion_sync().archive_page(search_evidence_notion_page_id)
 
 
+def _delete_campaign_static_paths(
+    campaign_id: str, leads: list[dict], reports: list[tuple[str, dict]]
+) -> None:
+    """Best-effort removal of static artifacts (published audit pages, generated sites).
+
+    Removes artifact folders collected from report/lead docs, then commits
+    the removals so published URLs go dark. Every path is root-guarded;
+    failures log, never block the purge.
+    """
+    try:
+        from app.services.audit_report_artifacts import audit_reports_root
+        from app.services.static_website_generator import (
+            git_commit_and_push_static_paths,
+            websites_root,
+        )
+    except Exception as exc:
+        logger.warning(
+            "[Cleanup] Campaign %s skipped static artifact delete: modules unavailable: %s",
+            campaign_id,
+            exc,
+        )
+        return
+    targets: list = []
+    for _collection, report in reports:
+        path = (report.get("static_report_path") or "").strip()
+        if path:
+            targets.append((path, audit_reports_root))
+    for lead in leads:
+        path = (lead.get("generated_website_path") or "").strip()
+        if path:
+            targets.append((path, websites_root))
+    if not targets:
+        return
+    removed: list = []
+    for raw, root_fn in targets:
+        try:
+            root = root_fn().resolve()
+        except Exception as exc:
+            logger.warning(
+                "[Cleanup] Campaign %s skipping static path %s: bad root: %s",
+                campaign_id,
+                raw,
+                exc,
+            )
+            continue
+        resolved = Path(raw).expanduser().resolve()
+        try:
+            resolved.relative_to(root)
+        except ValueError:
+            logger.warning(
+                "[Cleanup] Campaign %s refusing static path outside root: %s",
+                campaign_id,
+                resolved,
+            )
+            continue
+        if resolved == root:
+            logger.warning(
+                "[Cleanup] Campaign %s refusing static root itself: %s", campaign_id, resolved
+            )
+            continue
+        if not resolved.exists():
+            continue
+        try:
+            if resolved.is_dir() and not resolved.is_symlink():
+                shutil.rmtree(resolved)
+            else:
+                resolved.unlink()
+            removed.append(str(resolved))
+        except Exception as exc:
+            logger.warning(
+                "[Cleanup] Campaign %s failed to remove static path %s: %s",
+                campaign_id,
+                resolved,
+                exc,
+            )
+    if not removed:
+        return
+    try:
+        summary = git_commit_and_push_static_paths(
+            removed,
+            commit_message=f"Remove static artifacts for deleted campaign {campaign_id}",
+            commit_body=f"Removed {len(removed)} path(s) during campaign purge.",
+            push=True,
+        )
+    except Exception as exc:
+        logger.warning(
+            "[Cleanup] Campaign %s static artifact commit failed: %s",
+            campaign_id,
+            exc,
+            exc_info=True,
+        )
+        return
+    logger.info("[Cleanup] Campaign %s static artifact commit: %s.", campaign_id, summary)
+
+
+def _delete_campaign_export_bundles(campaign_id: str) -> None:
+    """Best-effort removal of saved export ZIPs containing the campaign.
+
+    Saved bundles are regenerable snapshots swept by retention anyway;
+    bundles mixing other campaigns go too and regenerate on demand.
+    """
+    export_dir = Path(get_settings().export_dir)
+    if not export_dir.is_dir():
+        return
+    for path in sorted(export_dir.iterdir()):
+        if not (path.name.startswith("campaign-export-") and path.suffix == ".zip"):
+            continue
+        try:
+            with zipfile.ZipFile(path) as archive:
+                summary = json.loads(archive.read("all-campaigns-summary.json"))
+            ids = {
+                c.get("id") for c in summary.get("campaigns", []) if isinstance(c, dict)
+            }
+        except Exception as exc:
+            logger.warning(
+                "[Cleanup] Campaign %s skipping unreadable export %s: %s",
+                campaign_id,
+                path.name,
+                exc,
+            )
+            continue
+        if campaign_id not in ids:
+            continue
+        try:
+            path.unlink()
+            status_path = export_dir / f"{path.name[len('campaign-export-'):-len('.zip')]}.json"
+            if status_path.is_file():
+                status_path.unlink()
+            logger.info(
+                "[Cleanup] Campaign %s removed export bundle %s.", campaign_id, path.name
+            )
+        except Exception as exc:
+            logger.warning(
+                "[Cleanup] Campaign %s failed to remove export %s: %s",
+                campaign_id,
+                path.name,
+                exc,
+            )
+
+
+def _delete_campaign_cloudinary_media(campaign_id: str, leads: list) -> None:
+    """Best-effort removal of Cloudinary listing media and review avatars.
+
+    Collects stored media references from the lead docs before they are
+    deleted. Failures are logged, never raised: orphaned images must not
+    block the purge.
+    """
+    items: list = []
+    for lead in leads:
+        for key in ("google_listing_images", "google_listing_videos"):
+            media = lead.get(key) or []
+            items.extend(
+                m for m in media if isinstance(m, dict) and m.get("cloudinary_public_id")
+            )
+        for review in lead.get("google_reviews") or []:
+            if not isinstance(review, dict):
+                continue
+            public_id = review.get("avatar_cloudinary_public_id")
+            if public_id:
+                items.append({"cloudinary_public_id": public_id, "resource_type": "image"})
+    if not items:
+        return
+    try:
+        from app.services.maps_media_scraper import delete_cloudinary_media
+    except Exception as exc:
+        logger.warning(
+            "[Cleanup] Campaign %s skipped Cloudinary media delete: media module unavailable: %s",
+            campaign_id,
+            exc,
+        )
+        return
+    try:
+        summary = delete_cloudinary_media(items)
+    except Exception as exc:
+        logger.warning(
+            "[Cleanup] Campaign %s Cloudinary media delete failed: %s",
+            campaign_id,
+            exc,
+            exc_info=True,
+        )
+        return
+    logger.info("[Cleanup] Campaign %s Cloudinary media delete: %s.", campaign_id, summary)
+
+
 def _delete_campaign_doc(campaign_id: str) -> bool:
     campaign = _ensure_campaign_mutable(campaign_id)
     lead_docs = _query_all(LEADS, filters=[("campaign_id", "==", campaign_id)])
@@ -1128,7 +1286,7 @@ def _delete_campaign_doc(campaign_id: str) -> bool:
         draft_docs.extend(_query_all(EMAIL_DRAFTS, filters=[("lead_id", "==", lead_id)]))
 
     for draft in draft_docs:
-        _delete_gmail_draft_if_configured(draft)
+        _delete_gmail_draft(draft)
         _archive_notion_page(draft)
         delete_document(EMAIL_DRAFTS, draft["id"])
 
@@ -1136,22 +1294,20 @@ def _delete_campaign_doc(campaign_id: str) -> bool:
         _archive_notion_page(report)
         delete_document(collection, report["id"])
 
+    _delete_campaign_cloudinary_media(campaign_id, lead_docs)
+    _delete_campaign_static_paths(campaign_id, lead_docs, report_docs)
+    _delete_campaign_export_bundles(campaign_id)
+
     for lead in lead_docs:
         _archive_notion_page(lead)
         delete_document(LEADS, lead["id"])
 
     _archive_notion_page(campaign)
     delete_document(CAMPAIGNS, campaign_id)
-    name = (campaign.get("name") or "").strip()
-    if name:
-        delete_document(CAMPAIGN_NAMES, _campaign_name_key(name))
     return True
 
 
-def _delete_gmail_draft_if_configured(draft: dict) -> None:
-    if not get_settings().gmail_delete_drafts_on_campaign_delete:
-        return
-
+def _delete_gmail_draft(draft: dict) -> None:
     gmail_draft_id = draft.get("gmail_draft_id")
     if not gmail_draft_id:
         return

@@ -2843,6 +2843,16 @@ def repair_campaign_websites(
     return result
 
 
+def _repair_website_graduation(existing: dict, website: str | None) -> bool:
+    """Whether a repaired website graduates the lead back to pending.
+
+    Only the False-to-True flip qualifies, so Resume picks the graduate
+    up. Any other repair leaves lifecycle status alone: resetting
+    in-funnel leads would yank them backward into reprocessing.
+    """
+    return bool(website) and not existing.get("has_website")
+
+
 @celery_app.task(
     name="tasks.repair_campaign_maps_data",
     bind=True,
@@ -2917,6 +2927,7 @@ def repair_campaign_maps_data(
         "checked": 0,
         "updated": 0,
         "failed": 0,
+        "graduated_to_pending": 0,
         "missing_google_maps_url": plan["missing_google_maps_url"],
         "websites_updated": 0,
         "addresses_updated": 0,
@@ -3045,6 +3056,13 @@ def repair_campaign_maps_data(
             })
             if normalized.get("website") != existing.get("website"):
                 result["websites_updated"] += 1
+            if _repair_website_graduation(existing, normalized.get("website")):
+                update_payload["scrape_status"] = "pending"
+                result["graduated_to_pending"] += 1
+                logger.info(
+                    "[Maps Data Repair] Lead %s graduated to pending for the website track.",
+                    lead_id,
+                )
         elif wants_website and existing.get("website") and not _looks_like_valid_website(existing.get("website")):
             update_payload.update({
                 "website": None,

@@ -224,6 +224,7 @@ export interface Campaign {
   status: string;
   stats?: CampaignStats;
   scrape_settings?: { website_filter?: string; [k: string]: unknown } | null;
+  top_ranked_businesses?: Record<string, unknown>[];
   progress?: { stage?: string; message?: string } | null;
   created_at?: string | null;
   updated_at?: string | null;

@@ -587,6 +587,53 @@ def _upload_and_sanitize_google_reviews(
     return _sanitize_google_reviews(reviews)
 
 
+def _top_ranked_snapshot(
+    businesses: List[Dict[str, Any]],
+    skipped_brands: List[Dict[str, Any]],
+    limit: int = 5,
+) -> List[Dict[str, Any]]:
+    """Top-ranked Maps businesses for draft context, regardless of website.
+
+    Merges collected businesses with brand-skipped names by approximate
+    Maps rank (card attempt order). Website status never excludes: the
+    snapshot describes the ranked market, not the prospect pool.
+    """
+    entries: List[Dict[str, Any]] = []
+    for biz in businesses or []:
+        entries.append(
+            {
+                "maps_rank": biz.get("maps_rank"),
+                "business_name": biz.get("business_name") or "",
+                "website": biz.get("website"),
+                "has_website": bool(biz.get("website")),
+                "google_rating": biz.get("google_rating"),
+                "google_review_count": biz.get("google_review_count"),
+                "address": biz.get("address"),
+                "phone": biz.get("phone"),
+                "brand_excluded": False,
+            }
+        )
+    for skipped in skipped_brands or []:
+        entries.append(
+            {
+                "maps_rank": skipped.get("maps_rank"),
+                "business_name": skipped.get("business_name") or "",
+                "website": None,
+                "has_website": False,
+                "google_rating": None,
+                "google_review_count": None,
+                "address": None,
+                "phone": None,
+                "brand_excluded": True,
+            }
+        )
+    entries.sort(key=lambda e: (e["maps_rank"] is None, e["maps_rank"] or 0))
+    snapshot = []
+    for rank, entry in enumerate(entries[:limit], start=1):
+        snapshot.append({**entry, "rank": rank})
+    return snapshot
+
+
 def _campaign_scrape_settings(campaign: Dict[str, Any]) -> Dict[str, Any]:
     settings = get_settings()
     scrape_settings = campaign.get("scrape_settings") or {}
@@ -1360,12 +1407,16 @@ def _scrape_and_persist_maps_leads(
         "total": len(lead_ids),
         "maps": maps_metrics,
     }
+    top_ranked = _top_ranked_snapshot(
+        businesses, maps_metrics.get("skipped_brands") or []
+    )
     update_document(
         CAMPAIGNS,
         campaign_id,
         {
             "stats.total": len(lead_ids),
             "stats.maps": maps_metrics,
+            "top_ranked_businesses": top_ranked,
             "scrape_settings.max_results": max_results,
             "scrape_settings.dedupe_enabled": bool(dedupe_enabled),
             "scrape_settings.listing_media_enabled": bool(listing_media_enabled),

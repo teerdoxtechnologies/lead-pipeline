@@ -1766,6 +1766,7 @@ def _serialise_campaign(doc: dict) -> CampaignResponse:
         stats=CampaignStats(**stats_raw) if stats_raw else CampaignStats(),
         progress=doc.get("progress", {}),
         scrape_settings=doc.get("scrape_settings", {}),
+        top_ranked_businesses=doc.get("top_ranked_businesses", []),
         created_at=doc.get("created_at"),
         updated_at=doc.get("updated_at"),
     )

@@ -110,6 +110,7 @@ class CampaignResponse(BaseModel):
     stats: CampaignStats = Field(default_factory=CampaignStats)
     progress: Dict[str, Any] = Field(default_factory=dict)
     scrape_settings: Dict[str, Any] = Field(default_factory=dict)
+    top_ranked_businesses: List[Dict[str, Any]] = Field(default_factory=list)
     created_at: Optional[Any] = None
     updated_at: Optional[Any] = None
 

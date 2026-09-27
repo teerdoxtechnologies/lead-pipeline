@@ -2393,6 +2393,13 @@ o_website follow-ups now use the new preview-specific subject/body pair for oll
   the result). Shared RepairParams type in api.ts covers both repair
   endpoints.   Covered by backend/tests/test_repair_websites.py
   (4 tests).
+- Rank context for drafts: Maps top 5 snapshot stored on the campaign
+  (top_ranked_businesses: rank, name, site, rating, address, phone;
+  website never excludes, brand skips merge by rank; listings carry
+  maps_rank). SerpAPI evidence gains top_organic_results (position
+  order, directory/social excluded via existing lists). Draft prompt
+  wiring is still open. Covered by backend/tests/test_top_ranked.py
+  (7 tests).
 - Maps repair graduates website flips: when a repair turns
   has_website False to True, scrape_status resets to pending so
   Resume picks the lead up (_repair_website_graduation; counter

@@ -98,6 +98,7 @@ def collect_organic_search_evidence(niche: str, location: str) -> Dict[str, Any]
         if _looks_like_business_owned_result(result) and result.get("confidence_score", 0) >= 50
     ][:3]
 
+    top_organic = top_organic_results(organic_results)
     evidence.update({
         "status": "completed",
         "organic_results": organic_results,
@@ -105,6 +106,8 @@ def collect_organic_search_evidence(niche: str, location: str) -> Dict[str, Any]
         "organic_results_count": len(organic_results),
         "business_results_count": len(business_results),
         "has_useful_business_results": bool(business_results),
+        "top_organic_results": top_organic,
+        "top_organic_results_count": len(top_organic),
     })
     logger.info(
         "SerpAPI evidence collected for '%s': %d organic results, %d business-owned results.",
@@ -168,6 +171,18 @@ def _looks_like_business_owned_result(result: Dict[str, Any]) -> bool:
     if not domain:
         return False
     return not any(_domain_matches(domain, blocked) for blocked in _DIRECTORY_DOMAINS)
+
+
+def top_organic_results(
+    organic_results: List[Dict[str, Any]], limit: int = 5
+) -> List[Dict[str, Any]]:
+    """First organic results that are not public pages or marketplaces.
+
+    Position order is preserved; directory/social/video domains are
+    excluded. For competitor context in outreach drafts.
+    """
+    kept = [r for r in (organic_results or []) if _looks_like_business_owned_result(r)]
+    return kept[: max(limit, 0)]
 
 
 def _domain(url: str) -> str:

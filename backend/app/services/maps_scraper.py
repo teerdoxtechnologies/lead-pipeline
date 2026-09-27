@@ -567,6 +567,11 @@ async def _extract_visible_articles(
             # Big-brand exclusion: never prospects, skip all further work.
             if is_excluded_brand(name):
                 metrics["brand_skipped"] = int(metrics.get("brand_skipped") or 0) + 1
+                skipped_brands = metrics.setdefault("skipped_brands", [])
+                if len(skipped_brands) < 50:
+                    skipped_brands.append(
+                        {"maps_rank": metrics["cards_attempted"], "business_name": name}
+                    )
                 logger.info("Skipping excluded brand %s.", name)
                 continue
 
@@ -612,6 +617,7 @@ async def _extract_visible_articles(
 
             seen_keys.add(key)
             logger.debug("Article %d extracted: %s", i, parsed.get("business_name"))
+            parsed["maps_rank"] = metrics["cards_attempted"]
             listings.append(parsed)
 
             await asyncio.sleep(0.5)

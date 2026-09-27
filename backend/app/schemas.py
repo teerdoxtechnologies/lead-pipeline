@@ -350,19 +350,6 @@ class NotionBackfillResponse(BaseModel):
     skipped: int = 0
 
 
-class CampaignCleanupPreviewResponse(BaseModel):
-    campaign_ids: List[str] = Field(default_factory=list)
-    campaigns: int = 0
-    mutable_campaigns: int = 0
-    running_or_analyzing_campaigns: int = 0
-    leads: int = 0
-    audit_reports: int = 0
-    no_website_reports: int = 0
-    email_drafts: int = 0
-    notion_pages: int = 0
-    notion_pages_unknown: bool = False
-
-
 # ---------------------------------------------------------------------------
 # Lead schemas
 # ---------------------------------------------------------------------------

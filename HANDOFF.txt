@@ -2422,6 +2422,11 @@ o_website follow-ups now use the new preview-specific subject/body pair for oll
   derived lead counts at the two summary backfills (routes/scrape +
   tasks); legit zeros pass through. Covered by
   backend/tests/test_firebase_helpers.py.
+- Redundancy sweep: deleted dead _scrape_maps wrapper; deleted the
+  unlinked cleanup-preview route + helper + response model + README
+  docs (dialog fetches nothing; server re-validates); sent-toast logic
+  lives once in lib/leadStage sentToast (3 pages call it); bucket
+  counts read straight from candidatesQ.data (wc alias gone).
 - Maps-data repair selection is exposed via components
   /RepairMapsDataDialog.tsx on the campaign detail page (replaces the
   direct-queue button): lead IDs first (comma-separated, blank means

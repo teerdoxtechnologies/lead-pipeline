@@ -1,4 +1,6 @@
 import type { Lead, LeadDetail, LeadDiagnostics, Outreach } from './api';
+import { toast } from 'sonner';
+import { relTime } from './format';
 
 /** Pipeline stages in order. Never inferred from color alone — every step has a label + state. */
 export interface PipeStep {
@@ -103,6 +105,16 @@ export function leadPipeline(
     }
     return { ...s, state: 'todo' as const };
   });
+}
+
+/** Shared "email sent" confirmation: event plus follow-up timing. */
+export function sentToast(stage: unknown, followUpDueAt?: string | null): void {
+  const stageText = String(stage ?? 'initial').replace(/_/g, ' ');
+  toast.success(
+    followUpDueAt
+      ? `Sent ${stageText}. Follow-up due ${relTime(followUpDueAt)}.`
+      : `Sent ${stageText}. No further follow-ups scheduled.`,
+  );
 }
 
 /** Short human summary of where a lead stands, for table cells. */

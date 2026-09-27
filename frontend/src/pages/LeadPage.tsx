@@ -10,7 +10,7 @@ import RepairMapsDataDialog from '../components/RepairMapsDataDialog';
 import { getTrackedJobs, latestJobFor, trackJob } from '../lib/jobs';
 import { useSiteUrls } from '../lib/site';
 import { fmtDate, isActiveJob, relTime } from '../lib/format';
-import { isSent, leadPipeline, outreachFor } from '../lib/leadStage';
+import { isSent, leadPipeline, outreachFor, sentToast } from '../lib/leadStage';
 import {
   Breadcrumbs, EmptyState, Field, Fields, Meter, Section, StatusPill, Steps,
 } from '../components/ui';
@@ -152,11 +152,7 @@ export default function LeadPage() {
     setSending(true);
     try {
       const updated = await api.markSent(oid, platform);
-      toast.success(
-        updated.follow_up_due_at
-          ? `Sent ${String(pending.stage ?? 'initial').replace(/_/g, ' ')}. Follow-up due ${relTime(updated.follow_up_due_at)}.`
-          : `Sent ${String(pending.stage ?? 'initial').replace(/_/g, ' ')}. No further follow-ups scheduled.`,
-      );
+      sentToast(pending.stage, updated.follow_up_due_at);
       setPending(null);
       invalidate();
     } catch (e) { onErr(e); } finally { setSending(false); }

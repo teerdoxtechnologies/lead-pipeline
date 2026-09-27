@@ -2367,11 +2367,6 @@ def _scrape_and_persist_listing_media(campaign_id: str, lead_ids: List[str]) -> 
 # ---------------------------------------------------------------------------
 
 
-async def _scrape_maps(niche: str, location: str) -> List[Dict[str, Any]]:
-    from app.services.maps_scraper import scrape_google_maps
-    return await scrape_google_maps(niche, location)
-
-
 async def _scrape_maps_with_metrics(
     niche: str,
     location: str,

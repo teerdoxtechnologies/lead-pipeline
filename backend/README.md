@@ -743,18 +743,6 @@ curl http://localhost:8000/api/exports/EXPORT_ID/status
 curl -L -o campaign-export.zip http://localhost:8000/api/exports/EXPORT_ID/download
 ```
 
-Preview cleanup impact for all campaigns:
-
-```bash
-curl http://localhost:8000/api/campaigns/cleanup-preview
-```
-
-Preview cleanup impact for selected campaigns:
-
-```bash
-curl "http://localhost:8000/api/campaigns/cleanup-preview?campaign_ids=CAMPAIGN_ID_1&campaign_ids=CAMPAIGN_ID_2"
-```
-
 Delete one campaign and its local related records:
 
 ```bash
@@ -913,7 +901,6 @@ When forced, campaign Notion sync also derives missing campaign counts from exis
 - `GET /api/campaigns/{campaign_id}/export.zip` - direct single-campaign ZIP download for small campaigns
 - `GET /api/leads/{lead_id}` - lead details
 - `POST /api/campaigns/{campaign_id}/resume` - resume pending analysis when enabled
-- `GET /api/campaigns/cleanup-preview` - preview campaigns, leads, reports, drafts, and Notion pages affected by cleanup
 - `POST /api/campaigns/delete` - delete selected or all campaigns and related local records
 - `GET /api/config/runtime` - show non-secret runtime settings
 - `GET /api/config/notion/schema` - show Notion database property names, types, and select/status options
@@ -969,12 +956,6 @@ For `scope=selected`, running or analyzing campaigns are skipped and reported in
 the job result. For `scope=all`, the app refuses the whole delete-all job if any
 campaign is running or analyzing, so it never leaves you with a partial
 delete-all cleanup.
-
-Preview cleanup before bulk operations:
-
-```bash
-curl http://localhost:8000/api/campaigns/cleanup-preview
-```
 
 Delete requires `scope` as a query parameter and this confirmation value in the
 JSON body:

@@ -118,10 +118,6 @@ export default function CampaignDetailPage() {
   const cancelMut = useMutation({ mutationFn: () => api.cancel(id), onSuccess: invalidate });
   const auditMut = useMutation({ mutationFn: () => api.auditWebsites(id, {}), onSuccess: (d) => onJob(d, 'Run audits') });
   const regenMut = useMutation({ mutationFn: () => api.regenerateDrafts(id), onSuccess: (d) => onJob(d, 'Regenerate drafts') });
-  const repairWebsitesMut = useMutation({
-    mutationFn: () => api.repairWebsites(id, activeSel.length ? { lead_ids: activeSel.join(',') } : undefined),
-    onSuccess: (d) => onJob(d, 'Repair websites'),
-  });
   const syncNotionMut = useMutation({ mutationFn: () => api.syncNotion(id), onSuccess: (d) => onJob(d, 'Sync Notion') });
   const genDraftsMut = useMutation({
     mutationFn: () => api.generateOutreachDrafts(id, activeSel.length ? { lead_ids: activeSel } : undefined),
@@ -144,7 +140,7 @@ export default function CampaignDetailPage() {
 
   const queueBusy = fullMut.isPending || scrapeMut.isPending || resumeMut.isPending || cancelMut.isPending;
 
-  const actionErr = [fullMut, scrapeMut, resumeMut, cancelMut, auditMut, regenMut, repairWebsitesMut, syncNotionMut, genDraftsMut, markMut, buildMut, publishMut]
+  const actionErr = [fullMut, scrapeMut, resumeMut, cancelMut, auditMut, regenMut, syncNotionMut, genDraftsMut, markMut, buildMut, publishMut]
     .map((m) => (m.error instanceof Error ? m.error.message : m.error ? String(m.error) : ''))
     .filter(Boolean)[0];
   const err =
@@ -221,7 +217,6 @@ export default function CampaignDetailPage() {
     else if (bulkAction === 'publish') queuePublish();
     else if (bulkAction === 'drafts') genDraftsMut.mutate();
     else if (bulkAction === 'repairmaps') setRepairOpen(true);
-    else if (bulkAction === 'repairwebsites') repairWebsitesMut.mutate();
     else if (bulkAction === 'syncnotion') syncNotionMut.mutate();
     else if (bulkAction === 'cleanup') runCleanup(true);
   }
@@ -231,7 +226,6 @@ export default function CampaignDetailPage() {
     buildMut.isPending ||
     publishMut.isPending ||
     genDraftsMut.isPending ||
-    repairWebsitesMut.isPending ||
     syncNotionMut.isPending ||
     cleanBusy;
 
@@ -264,8 +258,6 @@ export default function CampaignDetailPage() {
     setBadIds([]);
     publishMut.mutate();
   }
-
-  const wc = candidatesQ.data?.workflow_counts as Record<string, number> | undefined;
 
   async function runCleanup(dryRun: boolean) {
     setCleanBusy(true);
@@ -352,7 +344,7 @@ export default function CampaignDetailPage() {
           <StatCard label="No website" value={num(s?.missing_website)} hint="build targets" tone="warn" />
         )}
         {websiteFilter === 'no_website' ? (
-          <StatCard label="Not marked" value={num(wc?.not_marked_needs_website ?? candidatesQ.data?.not_marked_needs_website)} hint="needs_website flag off" tone="warn" />
+          <StatCard label="Not marked" value={num(candidatesQ.data?.not_marked_needs_website)} hint="needs_website flag off" tone="warn" />
         ) : (
           <StatCard label="Analyzed" value={num(s?.analyzed)} hint={`of ${num(s?.total)} leads · audit + no-site reports`} />
         )}
@@ -386,8 +378,8 @@ export default function CampaignDetailPage() {
             }
           }
           const overdue = [...overdueByStage.values()].reduce((a, b) => a + b, 0);
-          const previewed = Number(wc?.preview_built ?? candidatesQ.data?.preview_built ?? 0);
-          const hosted = Number(wc?.hosted ?? candidatesQ.data?.hosted ?? 0);
+          const previewed = Number(candidatesQ.data?.preview_built ?? 0);
+          const hosted = Number(candidatesQ.data?.hosted ?? 0);
           return (
             <>
               <div className="stat-grid" role="group" aria-label="Follow-up and site totals" style={{ marginBottom: overdueByStage.size ? 14 : 0 }}>
@@ -452,7 +444,6 @@ export default function CampaignDetailPage() {
             <option value="publish">Publish</option>
             <option value="drafts">Generate drafts</option>
             <option value="repairmaps">Repair Maps data</option>
-            <option value="repairwebsites">Repair websites</option>
             <option value="syncnotion">Sync Notion</option>
             <option value="cleanup">Preview cleanup</option>
           </select>

@@ -4,6 +4,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { api, type Outreach } from '../lib/api';
 import { relTime } from '../lib/format';
+import { sentToast } from '../lib/leadStage';
 import ConfirmSendDialog from '../components/ConfirmSendDialog';
 import { trackJob } from '../lib/jobs';
 import { EmptyState, Section, SkeletonRows, StatCard, StatusPill } from '../components/ui';
@@ -52,11 +53,7 @@ export default function OutreachPage() {
     setActionError('');
     try {
       const updated = await api.markSent(oid, platform);
-      toast.success(
-        updated.follow_up_due_at
-          ? `Sent ${String(o.stage ?? 'initial').replace(/_/g, ' ')}. Follow-up due ${relTime(updated.follow_up_due_at)}.`
-          : `Sent ${String(o.stage ?? 'initial').replace(/_/g, ' ')}. No further follow-ups scheduled.`,
-      );
+      sentToast(o.stage, updated.follow_up_due_at);
       setPending(null);
       qc.invalidateQueries({ queryKey: ['drafts'] });
     } catch (e) {

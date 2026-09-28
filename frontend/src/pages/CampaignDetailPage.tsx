@@ -15,7 +15,7 @@ const RUNNING = new Set(['running', 'analyzing']);
 const LIVE = new Set(['running', 'analyzing', 'pending', 'scraped']);
 const PAGE_SIZE = 25;
 
-const SELECTION_ACTIONS: ReadonlySet<string> = new Set(['mark', 'unmark', 'build', 'publish']);
+const SELECTION_ACTIONS: ReadonlySet<string> = new Set(['mark', 'unmark', 'build', 'publish', 'unpublish']);
 
 function draftsByLead(items: Outreach[]): Map<string, Outreach[]> {
   const m = new Map<string, Outreach[]>();
@@ -137,10 +137,11 @@ export default function CampaignDetailPage() {
   });
   const buildMut = useMutation({ mutationFn: () => api.buildWebsites(id, activeSel), onSuccess: (d) => onJob(d, 'Build previews') });
   const publishMut = useMutation({ mutationFn: () => api.publishWebsites(id, activeSel), onSuccess: (d) => onJob(d, 'Publish sites') });
+  const unpublishMut = useMutation({ mutationFn: () => api.unpublishWebsites(id, activeSel), onSuccess: (d) => onJob(d, 'Unpublish sites') });
 
   const queueBusy = fullMut.isPending || scrapeMut.isPending || resumeMut.isPending || cancelMut.isPending;
 
-  const actionErr = [fullMut, scrapeMut, resumeMut, cancelMut, auditMut, regenMut, syncNotionMut, genDraftsMut, markMut, buildMut, publishMut]
+  const actionErr = [fullMut, scrapeMut, resumeMut, cancelMut, auditMut, regenMut, syncNotionMut, genDraftsMut, markMut, buildMut, publishMut, unpublishMut]
     .map((m) => (m.error instanceof Error ? m.error.message : m.error ? String(m.error) : ''))
     .filter(Boolean)[0];
   const err =
@@ -215,6 +216,7 @@ export default function CampaignDetailPage() {
     else if (bulkAction === 'unmark') markMut.mutate(false);
     else if (bulkAction === 'build') queueBuild();
     else if (bulkAction === 'publish') queuePublish();
+    else if (bulkAction === 'unpublish') queueUnpublish();
     else if (bulkAction === 'drafts') genDraftsMut.mutate();
     else if (bulkAction === 'repairmaps') setRepairOpen(true);
     else if (bulkAction === 'syncnotion') syncNotionMut.mutate();
@@ -225,6 +227,7 @@ export default function CampaignDetailPage() {
     markMut.isPending ||
     buildMut.isPending ||
     publishMut.isPending ||
+    unpublishMut.isPending ||
     genDraftsMut.isPending ||
     syncNotionMut.isPending ||
     cleanBusy;
@@ -243,6 +246,20 @@ export default function CampaignDetailPage() {
     }
     setBadIds([]);
     buildMut.mutate();
+  }
+
+  function queueUnpublish() {
+    const rows = selectedRows();
+    const missing = rows.filter((l) => !l.generated_website_url);
+    if (missing.length) {
+      toast.warning(
+        `Cannot unpublish ${rows.length} selected: ${missing.length} ha${missing.length === 1 ? 's' : 've'} no live site. Unselect them first.`,
+      );
+      setBadIds(missing.map((l) => String(l.id)));
+      return;
+    }
+    setBadIds([]);
+    unpublishMut.mutate();
   }
 
   function queuePublish() {
@@ -442,6 +459,7 @@ export default function CampaignDetailPage() {
             <option value="unmark">Unmark</option>
             <option value="build">Build previews</option>
             <option value="publish">Publish</option>
+            <option value="unpublish">Unpublish</option>
             <option value="drafts">Generate drafts</option>
             <option value="repairmaps">Repair Maps data</option>
             <option value="syncnotion">Sync Notion</option>

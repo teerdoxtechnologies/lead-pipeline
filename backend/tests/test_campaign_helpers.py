@@ -71,6 +71,7 @@ from app.services.static_website_generator import (
     remove_generated_website_path,
 )
 from app.workers.tasks import (
+    _audit_reports_by_lead_ids,
     _campaign_processing_mode,
     _campaign_scrape_settings,
     _append_draft_reference,
@@ -2527,6 +2528,47 @@ class CampaignHelperTests(unittest.TestCase):
         self.assertEqual(html.count("review-card"), 4)
         self.assertEqual(html.count('class="review-card span-third"'), 3)
         self.assertIn('class="review-card span-full"', html)
+
+
+class AuditReportsByLeadIdsTests(unittest.TestCase):
+    def test_groups_by_lead_and_chunks(self):
+        calls = []
+
+        def fake_query(collection, filters=None, limit=None):
+            calls.append((collection, tuple(filters or [])))
+            field, op, values = (filters or [[None, None, []]])[0]
+            return [
+                {"id": f"r-{lead_id}", "lead_id": lead_id}
+                for lead_id in values
+            ]
+
+        with patch("app.workers.tasks.query_collection", side_effect=fake_query):
+            out = _audit_reports_by_lead_ids([f"l{n}" for n in range(25)])
+        self.assertEqual(len(out), 25)
+        self.assertEqual(out["l0"], [{"id": "r-l0", "lead_id": "l0"}])
+        self.assertEqual(len(calls), 3)
+        for _collection, filters in calls:
+            for _field, _op, values in filters:
+                self.assertLessEqual(len(values), 10)
+
+    def test_empty_and_blank_ids(self):
+        with patch("app.workers.tasks.query_collection") as query:
+            self.assertEqual(_audit_reports_by_lead_ids([]), {})
+            self.assertEqual(_audit_reports_by_lead_ids(["  ", None]), {})
+        query.assert_not_called()
+
+    def test_reuse_prefers_prefetched_map(self):
+        with (
+            patch("app.workers.tasks.query_collection") as query,
+            patch("app.workers.tasks.update_document"),
+        ):
+            out = _reuse_existing_audit_for_lead(
+                {"id": "l1", "business_name": "Biz"},
+                "c1",
+                {"l1": [{"id": "r1", "slug": "biz", "report_url": "https://x/y"}]},
+            )
+        query.assert_not_called()
+        self.assertEqual(out["report_id"], "r1")
 
 
 if __name__ == "__main__":

@@ -2361,6 +2361,19 @@ o_website follow-ups now use the new preview-specific subject/body pair for oll
   exist, else all available. Covered by
   backend/tests/  test_review_fetch.py + sanitize cases in
   test_campaign_helpers.py (review text guarantee + 6-review floor).
+- Improvements batch: (1) _with_failed_status decorator resets
+  running/analyzing to failed on unexpected errors (resume + both
+  repairs; run_full/scrape already had it; sync/build/publish never
+  set running). (2) Website cleanup decrements inventory counters
+  with clamp (per-run persisted untouched). (3) Card dedupe unified
+  on name-first keys. (4) Cross-listing review filter via shared set,
+  defensive panel close, rating re-read after settle. (5) Audit
+  lookups batched (chunked IN); per-lead gets kept for graceful-skip.
+  (6) Notion pacing is a shared cross-thread gate; backfill lead
+  syncs run 3 lanes with serial merge. (7) Unpublish takedown
+  (task + endpoint + dropdown option + guard needing a live site).
+  Covered by test_failed_status, test_websites_unpublish,
+  test_notion_sync, test_maps_repair additions.
 - Single-lead delete: DELETE /leads/{id}?confirm=DELETE_LEAD via
   _delete_lead_doc (externals first: drafts with Gmail + calendar
   events, reports, Cloudinary, static + git push, export bundles;

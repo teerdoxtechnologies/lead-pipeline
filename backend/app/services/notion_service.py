@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import re
+import threading
 import time
 from functools import lru_cache
 from typing import Any, Dict, Optional
@@ -20,6 +21,11 @@ from app.config import get_settings
 from app.services.serpapi_service import _looks_like_business_owned_result
 
 logger = logging.getLogger(__name__)
+
+# Shared request pacing: the delay setting is a global rate limit, so all
+# threads (and all NotionSync instances) coordinate through one timestamp.
+_PACE_LOCK = threading.Lock()
+_PACE_LAST_CALL = [0.0]
 
 _NOTION_VERSION = "2022-06-28"
 _BASE_URL = "https://api.notion.com/v1"
@@ -60,7 +66,6 @@ class NotionSync:
             and self.settings.notion_outreach_db_id
         )
         self._schemas: Dict[str, Dict[str, str]] = {}
-        self._last_request_at = 0.0
         self.search_evidence_enabled = bool(self.enabled and self.settings.notion_search_evidence_db_id)
 
     def sync_campaign(self, campaign_id: str, campaign: Dict[str, Any]) -> Optional[str]:
@@ -564,10 +569,11 @@ class NotionSync:
         delay = max(float(self.settings.notion_request_delay_seconds or 0), 0)
         if delay <= 0:
             return
-        elapsed = time.monotonic() - self._last_request_at
-        if elapsed < delay:
-            time.sleep(delay - elapsed)
-        self._last_request_at = time.monotonic()
+        with _PACE_LOCK:
+            elapsed = time.monotonic() - _PACE_LAST_CALL[0]
+            if elapsed < delay:
+                time.sleep(delay - elapsed)
+            _PACE_LAST_CALL[0] = time.monotonic()
 
     def _properties(self, database_id: str, desired: Dict[str, Optional[Dict[str, Any]]]) -> Dict[str, Any]:
         schema = self._database_schema(database_id)

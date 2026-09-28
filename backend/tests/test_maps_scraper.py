@@ -1,6 +1,8 @@
 import unittest
+from unittest.mock import AsyncMock, MagicMock
 
 from app.services.maps_scraper import (
+    _article_card_key,
     _clean_review_author,
     _listing_key,
     _parse_fields,
@@ -144,6 +146,44 @@ class MapsScraperParsingTests(unittest.TestCase):
             _review_key({"author": "Ashley\nLocal Guide", "text": "Great clean"}),
             "ashley|great clean",
         )
+
+
+def _fake_article(*, aria_label=None, heading=None, text="", fail_text=False):
+    article = MagicMock()
+    article.get_attribute = AsyncMock(return_value=aria_label)
+    first = MagicMock()
+    first.count = AsyncMock(return_value=1 if heading else 0)
+    first.inner_text = AsyncMock(return_value=heading or "")
+    heading_locator = MagicMock()
+    heading_locator.first = first
+    article.locator = MagicMock(return_value=heading_locator)
+    if fail_text:
+        article.inner_text = AsyncMock(side_effect=Exception("gone"))
+    else:
+        article.inner_text = AsyncMock(return_value=text)
+    return article
+
+
+class ArticleCardKeyTests(unittest.IsolatedAsyncioTestCase):
+    async def test_prefers_aria_label(self):
+        article = _fake_article(aria_label="ScanShield AI", text="ScanShield AI 4.0 (2495)")
+        self.assertEqual(await _article_card_key(article), "name:scanshield ai")
+        article.locator.assert_not_called()
+        article.inner_text.assert_not_called()
+
+    async def test_falls_back_to_heading(self):
+        article = _fake_article(aria_label="  ", heading="Colony Roofers")
+        self.assertEqual(await _article_card_key(article), "name:colony roofers")
+
+    async def test_falls_back_to_full_text(self):
+        article = _fake_article(text="Some Biz 4.5 Great service")
+        key = await _article_card_key(article)
+        self.assertFalse(key.startswith("name:"))
+        self.assertIn("some biz", key)
+
+    async def test_all_missing_returns_empty(self):
+        article = _fake_article(fail_text=True)
+        self.assertEqual(await _article_card_key(article), "")
 
 
 if __name__ == "__main__":

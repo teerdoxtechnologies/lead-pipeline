@@ -17,6 +17,7 @@ from app.firebase import (
     NO_WEBSITE_REPORTS,
     delete_document,
     get_document,
+    heal_counter,
     query_collection,
     update_document,
 )
@@ -27,10 +28,11 @@ from app.schemas import (
     WebsiteCleanupRequest,
     WebsiteMarkRequest,
     WebsitePublishRequest,
+    WebsiteUnpublishRequest,
 )
 from app.services.static_website_generator import eligible_for_static_website, websites_root
 from app.services.notion_service import get_notion_sync
-from app.workers.tasks import build_campaign_static_websites, publish_campaign_static_websites
+from app.workers.tasks import build_campaign_static_websites, publish_campaign_static_websites, unpublish_campaign_static_websites
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -177,6 +179,34 @@ async def publish_campaign_websites(campaign_id: str, body: WebsitePublishReques
 
 
 @router.post(
+    "/campaigns/{campaign_id}/websites/unpublish",
+    response_model=CampaignRunResponse,
+    summary="Take down hosted generated websites",
+)
+async def unpublish_campaign_websites(campaign_id: str, body: WebsiteUnpublishRequest):
+    campaign = get_document(CAMPAIGNS, campaign_id)
+    if campaign is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Campaign '{campaign_id}' not found.",
+        )
+
+    task = unpublish_campaign_static_websites.delay(
+        campaign_id,
+        body.lead_ids,
+        body.commit_message,
+        body.sync_to_notion,
+    )
+    logger.info(
+        "[Website API] Queued website unpublish for campaign %s as task %s lead_ids=%s.",
+        campaign_id,
+        task.id,
+        body.lead_ids,
+    )
+    return CampaignRunResponse(job_id=task.id, campaign_id=campaign_id, status="queued")
+
+
+@router.post(
     "/campaigns/{campaign_id}/websites/mark",
     summary="Flag selected leads for (or against) website builds",
 )
@@ -308,6 +338,7 @@ async def cleanup_campaign_website_previews(campaign_id: str, body: WebsiteClean
         item = {
             "lead_id": lead_id,
             "business_name": lead.get("business_name"),
+            "has_website": bool(lead.get("has_website")),
             "skipped": False,
             "reason": reason,
             "removed": False,
@@ -396,6 +427,9 @@ async def cleanup_campaign_website_previews(campaign_id: str, body: WebsiteClean
         )
         result["static_publish"] = publish
         logger.info("[Website API] Cleanup static publish result for campaign %s: %s", campaign_id, publish)
+
+    if not body.dry_run:
+        _apply_cleanup_stat_adjustment(campaign_id, result["items"])
 
     logger.info(
         "[Website API] Cleanup finished for campaign %s: eligible=%d removed=%d removed_outreach=%d removed_reports=%d skipped=%d failed=%d notion_archived=%d static_paths_removed=%d.",
@@ -519,6 +553,36 @@ def _lead_report_docs(lead_id: str | None) -> list[tuple[str, dict]]:
                 break
             offset += 500
     return docs
+
+
+def _apply_cleanup_stat_adjustment(campaign_id: str, items: list) -> None:
+    """Decrement inventory counters for cleanup-removed leads. Never below zero.
+
+    Per-run counters (businesses_persisted) are intentionally untouched:
+    cleanup removes rows, it does not rewrite run history.
+    """
+    removed = [item for item in items if item.get("removed")]
+    if not removed:
+        return
+    with_site = sum(1 for item in removed if item.get("has_website"))
+    campaign = get_document(CAMPAIGNS, campaign_id) or {}
+    stats = campaign.get("stats") or {}
+    maps = stats.get("maps") or {}
+    update_document(
+        CAMPAIGNS,
+        campaign_id,
+        {
+            "stats.total": max(0, heal_counter(stats.get("total"), 0) - len(removed)),
+            "stats.maps.with_website": max(
+                0, heal_counter(maps.get("with_website"), 0) - with_site
+            ),
+            "stats.maps.missing_website": max(
+                0,
+                heal_counter(maps.get("missing_website"), 0)
+                - (len(removed) - with_site),
+            ),
+        },
+    )
 
 
 def _lead_static_cleanup_paths(

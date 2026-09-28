@@ -1,11 +1,11 @@
-"""Tests for bulk website-build flagging (no Firestore access)."""
+"""Tests for bulk website-build flagging + cleanup stat adjustment (no Firestore)."""
 import asyncio
 import unittest
 from unittest.mock import patch
 
 from fastapi import HTTPException
 
-from app.routes.websites import mark_campaign_websites
+from app.routes.websites import _apply_cleanup_stat_adjustment, mark_campaign_websites
 from app.schemas import WebsiteMarkRequest
 
 
@@ -93,6 +93,78 @@ class MarkCampaignWebsitesTests(unittest.TestCase):
         self.assertFalse(out["needs_website"])
         self.assertEqual(out["updated"], 1)
         self.assertEqual(updated, [("leads", "l1", {"needs_website": False})])
+
+
+class ApplyCleanupStatAdjustmentTests(unittest.TestCase):
+    def test_decrements_buckets(self):
+        campaign = {
+            "id": "c1",
+            "stats": {
+                "total": 10,
+                "maps": {"with_website": 4, "missing_website": 6},
+            },
+        }
+        items = [
+            {"lead_id": "l1", "removed": True, "has_website": True},
+            {"lead_id": "l2", "removed": True, "has_website": False},
+            {"lead_id": "l3", "removed": False, "has_website": False},
+        ]
+        with (
+            patch(
+                "app.routes.websites.get_document", return_value=campaign
+            ),
+            patch("app.routes.websites.update_document") as update,
+        ):
+            _apply_cleanup_stat_adjustment("c1", items)
+        update.assert_called_once()
+        args = update.call_args[0]
+        self.assertEqual(args[0], "campaigns")
+        self.assertEqual(args[1], "c1")
+        self.assertEqual(
+            args[2],
+            {
+                "stats.total": 8,
+                "stats.maps.with_website": 3,
+                "stats.maps.missing_website": 5,
+            },
+        )
+
+    def test_clamps_at_zero(self):
+        campaign = {
+            "id": "c1",
+            "stats": {"total": 1, "maps": {"with_website": 0, "missing_website": 0}},
+        }
+        items = [
+            {"lead_id": "l1", "removed": True, "has_website": False},
+            {"lead_id": "l2", "removed": True, "has_website": False},
+        ]
+        with (
+            patch(
+                "app.routes.websites.get_document", return_value=campaign
+            ),
+            patch("app.routes.websites.update_document") as update,
+        ):
+            _apply_cleanup_stat_adjustment("c1", items)
+        args = update.call_args[0][2]
+        self.assertEqual(
+            args,
+            {
+                "stats.total": 0,
+                "stats.maps.with_website": 0,
+                "stats.maps.missing_website": 0,
+            },
+        )
+
+    def test_no_removals_no_write(self):
+        with (
+            patch("app.routes.websites.get_document") as get,
+            patch("app.routes.websites.update_document") as update,
+        ):
+            _apply_cleanup_stat_adjustment(
+                "c1", [{"lead_id": "l1", "removed": False}]
+            )
+        get.assert_not_called()
+        update.assert_not_called()
 
 
 if __name__ == "__main__":

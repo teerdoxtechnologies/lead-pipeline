@@ -19,6 +19,7 @@ Design principles:
 from __future__ import annotations
 
 import asyncio
+import functools
 import logging
 import re
 import time
@@ -634,6 +635,43 @@ def _top_ranked_snapshot(
     return snapshot
 
 
+def _fail_campaign(campaign_id: str, message: str) -> Dict[str, Any]:
+    """Mark the campaign failed. Never raises (best-effort status write)."""
+    try:
+        update_document(
+            CAMPAIGNS,
+            campaign_id,
+            _campaign_status_payload("failed", "failed", message),
+        )
+    except Exception:
+        logger.exception("Could not mark campaign %s failed.", campaign_id)
+    return {"status": "failed", "campaign_id": campaign_id, "error": message}
+
+
+def _with_failed_status(fn):
+    """Reset running/analyzing to failed when a task raises unexpectedly.
+
+    Tasks whose endpoints set a running status must never strand it:
+    without this, an unexpected error leaves the campaign un-runnable
+    until manual Stop (every guarded action 409s). Cancellation
+    propagates untouched (callers handle it themselves). Mirrors the
+    inline except blocks in run_campaign_pipeline/scrape_campaign_maps.
+    """
+    @functools.wraps(fn)
+    def wrapper(self, campaign_id, *args, **kwargs):
+        try:
+            return fn(self, campaign_id, *args, **kwargs)
+        except (CampaignCancelled, asyncio.CancelledError):
+            raise
+        except Exception as exc:
+            logger.error(
+                "Task %s failed for campaign %s: %s", fn.__name__, campaign_id, exc,
+                exc_info=True,
+            )
+            return _fail_campaign(campaign_id, f"{fn.__name__} failed: {exc}")
+    return wrapper
+
+
 def _campaign_scrape_settings(campaign: Dict[str, Any]) -> Dict[str, Any]:
     settings = get_settings()
     scrape_settings = campaign.get("scrape_settings") or {}
@@ -910,6 +948,27 @@ def _sync_campaign_summary_to_notion(campaign_id: str) -> Optional[str]:
     return notion_page_id
 
 
+def _audit_reports_by_lead_ids(
+    lead_ids: List[str],
+) -> Dict[str, List[Dict[str, Any]]]:
+    """Batch-fetch audit reports grouped by lead (IN-chunks of 10)."""
+    grouped: Dict[str, List[Dict[str, Any]]] = {}
+    ids: List[str] = []
+    for lead_id in lead_ids or []:
+        cleaned = str(lead_id).strip() if lead_id else ""
+        if cleaned and cleaned not in ids:
+            ids.append(cleaned)
+    for index in range(0, len(ids), 10):
+        chunk = ids[index : index + 10]
+        for report in query_collection(
+            AUDIT_REPORTS, filters=[("lead_id", "in", chunk)], limit=500
+        ):
+            lead_id = report.get("lead_id")
+            if lead_id:
+                grouped.setdefault(lead_id, []).append(report)
+    return grouped
+
+
 def _resolve_audit_static_path(
     *,
     slug: str,
@@ -994,6 +1053,7 @@ def _mark_lead_existing_audit_reused(lead_id: str, report: Dict[str, Any]) -> No
 def _reuse_existing_audit_for_lead(
     lead: Dict[str, Any],
     campaign_id: str,
+    reports_by_lead: Optional[Dict[str, List[Dict[str, Any]]]] = None,
 ) -> Dict[str, Any] | None:
     """Reuse or repair an existing audit report before doing a fresh website audit."""
     lead_id = lead.get("id")
@@ -1001,7 +1061,10 @@ def _reuse_existing_audit_for_lead(
     if not lead_id:
         return None
 
-    reports = query_collection(AUDIT_REPORTS, filters=[("lead_id", "==", lead_id)], limit=50)
+    if reports_by_lead is None:
+        reports = query_collection(AUDIT_REPORTS, filters=[("lead_id", "==", lead_id)], limit=50)
+    else:
+        reports = reports_by_lead.get(lead_id, [])
     if not reports:
         logger.info(
             "[Lead %s] No existing audit report found; fresh audit is required.",
@@ -1551,6 +1614,7 @@ def run_campaign_pipeline(self, campaign_id: str) -> Dict[str, Any]:
         processed_leads = 0
         reused_existing_audits = 0
         skipped_no_website_manual_workflow = 0
+        audits_by_lead = _audit_reports_by_lead_ids(lead_ids)
         _set_campaign_progress(
             campaign_id,
             "processing_leads",
@@ -1583,7 +1647,7 @@ def run_campaign_pipeline(self, campaign_id: str) -> Dict[str, Any]:
                 )
                 continue
 
-            existing_audit = _reuse_existing_audit_for_lead(lead, campaign_id)
+            existing_audit = _reuse_existing_audit_for_lead(lead, campaign_id, audits_by_lead)
             if existing_audit:
                 reused_existing_audits += 1
                 logger.info(
@@ -2427,6 +2491,7 @@ async def _repair_maps_listing_details(
     soft_time_limit=3600,
     time_limit=3900,
 )
+@_with_failed_status
 def resume_campaign_analysis(self, campaign_id: str) -> Dict[str, Any]:
     """
     Resume analysis for pending has-website leads.
@@ -2492,6 +2557,7 @@ def resume_campaign_analysis(self, campaign_id: str) -> Dict[str, Any]:
     resumed = 0
     reused_existing_audits = 0
     skipped_no_website_manual_workflow = 0
+    audits_by_lead = _audit_reports_by_lead_ids([lead.get("id") for lead in pending_leads])
 
     for lead in pending_leads:
         try:
@@ -2518,7 +2584,7 @@ def resume_campaign_analysis(self, campaign_id: str) -> Dict[str, Any]:
             )
             continue
 
-        existing_audit = _reuse_existing_audit_for_lead(lead, campaign_id)
+        existing_audit = _reuse_existing_audit_for_lead(lead, campaign_id, audits_by_lead)
         if existing_audit:
             reused_existing_audits += 1
             logger.info(
@@ -2698,6 +2764,7 @@ def _select_repair_website_leads(
     soft_time_limit=3600,
     time_limit=3900,
 )
+@_with_failed_status
 def repair_campaign_websites(
     self,
     campaign_id: str,
@@ -2906,6 +2973,7 @@ def _repair_website_graduation(existing: dict, website: str | None) -> bool:
     soft_time_limit=7200,
     time_limit=7500,
 )
+@_with_failed_status
 def repair_campaign_maps_data(
     self,
     campaign_id: str,
@@ -3921,6 +3989,155 @@ def publish_campaign_static_websites(
         },
     )
     logger.info("[Websites Publish] Completed for campaign %s: %s", campaign_id, result)
+    return result
+
+
+@celery_app.task(
+    name="tasks.unpublish_campaign_static_websites",
+    bind=True,
+    max_retries=0,
+    soft_time_limit=3600,
+    time_limit=3900,
+)
+def unpublish_campaign_static_websites(
+    self,
+    campaign_id: str,
+    lead_ids: Optional[List[str]] = None,
+    commit_message: Optional[str] = None,
+    sync_to_notion: bool = True,
+) -> Dict[str, Any]:
+    """Take down hosted generated websites (takedown for churned clients)."""
+    logger.info(
+        "[Websites Unpublish] Starting unpublish for campaign %s (lead_ids=%s).",
+        campaign_id,
+        sorted({str(lead_id) for lead_id in (lead_ids or []) if str(lead_id).strip()}),
+    )
+    campaign = get_document(CAMPAIGNS, campaign_id)
+    if not campaign:
+        return {"status": "failed", "reason": "campaign_not_found", "campaign_id": campaign_id}
+
+    update_document(
+        CAMPAIGNS,
+        campaign_id,
+        {
+            "progress": {
+                "stage": "unpublishing_static_websites",
+                "message": "Taking down hosted generated websites.",
+            }
+        },
+    )
+
+    selected_ids = {str(lead_id).strip() for lead_id in (lead_ids or []) if str(lead_id).strip()}
+    leads = [
+        lead
+        for lead in query_collection(
+            LEADS, filters=[("campaign_id", "==", campaign_id)], limit=5000
+        )
+        if lead.get("id") and (not selected_ids or lead.get("id") in selected_ids)
+    ]
+    result: Dict[str, Any] = {
+        "status": "completed",
+        "campaign_id": campaign_id,
+        "checked": len(leads),
+        "unpublished": 0,
+        "skipped": 0,
+        "failed": 0,
+        "notion_synced": 0,
+        "items": [],
+        "git": None,
+    }
+
+    from app.services.static_website_generator import (
+        git_commit_and_push_static_paths,
+        remove_generated_website_path,
+    )
+
+    notion = get_notion_sync()
+    removed_paths: List[str] = []
+    for lead in leads:
+        lead_id = lead["id"]
+        live_url = lead.get("generated_website_url")
+        site_path = lead.get("generated_website_path")
+        if not live_url:
+            result["skipped"] += 1
+            result["items"].append({
+                "lead_id": lead_id,
+                "business_name": lead.get("business_name"),
+                "status": "skipped",
+                "reason": "not_published",
+            })
+            logger.info("[Websites Unpublish] Lead %s skipped: no live site.", lead_id)
+            continue
+        try:
+            if site_path and not remove_generated_website_path(site_path):
+                raise RuntimeError(f"static_path_remove_failed:{site_path}")
+            if site_path:
+                removed_paths.append(str(site_path))
+            update_document(
+                LEADS,
+                lead_id,
+                {
+                    "generated_website_url": None,
+                    "generated_website_path": None,
+                    "generated_website_status": "unpublished",
+                },
+            )
+            updated_lead = get_document(LEADS, lead_id) or {**lead, "id": lead_id}
+            if sync_to_notion:
+                notion_page_id = notion.sync_lead(
+                    lead_id,
+                    updated_lead,
+                    campaign_notion_page_id=campaign.get("notion_page_id"),
+                )
+                if notion_page_id:
+                    update_document(LEADS, lead_id, {"notion_page_id": notion_page_id})
+                    result["notion_synced"] += 1
+            result["unpublished"] += 1
+            result["items"].append({
+                "lead_id": lead_id,
+                "business_name": lead.get("business_name"),
+                "status": "unpublished",
+                "url": live_url,
+            })
+            logger.info("[Websites Unpublish] Lead %s taken down (was %s).", lead_id, live_url)
+        except Exception as exc:
+            result["failed"] += 1
+            result["items"].append({
+                "lead_id": lead_id,
+                "business_name": lead.get("business_name"),
+                "status": "failed",
+                "error": str(exc),
+            })
+            logger.error("[Websites Unpublish] Lead %s takedown failed: %s", lead_id, exc, exc_info=True)
+
+    if removed_paths:
+        git_result = git_commit_and_push_static_paths(
+            removed_paths,
+            commit_message=commit_message or f"Unpublish {len(removed_paths)} generated website(s)",
+            commit_body=f"Campaign {campaign_id} takedown.",
+            push=True,
+        )
+        result["git"] = git_result
+        if git_result.get("error") or not git_result.get("pushed"):
+            reason = git_result.get("error") or "Git push did not complete."
+            logger.error("[Websites Unpublish] Push failed for campaign %s: %s", campaign_id, reason)
+            result["status"] = "failed"
+            result["reason"] = reason
+
+    update_document(
+        CAMPAIGNS,
+        campaign_id,
+        {
+            "progress": {
+                "stage": "static_websites_unpublish_complete",
+                "message": (
+                    f"Unpublished {result['unpublished']} generated websites; "
+                    f"{result['failed']} failed."
+                ),
+            },
+        },
+    )
+    logger.info("[Websites Unpublish] Completed for campaign %s: %s", campaign_id, result)
     return result
 
 

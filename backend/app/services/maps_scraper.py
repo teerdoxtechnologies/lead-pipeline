@@ -175,6 +175,7 @@ async def repair_google_maps_listing_details(
     """Revisit saved Google Maps listing URLs and re-extract requested fields."""
     settings = get_settings()
     repaired: List[Dict[str, Any]] = []
+    run_review_keys: set[str] = set()
 
     async with async_playwright() as pw:
         context: BrowserContext = await pw.chromium.launch_persistent_context(
@@ -241,6 +242,7 @@ async def repair_google_maps_listing_details(
                             page,
                             business_name=business_name,
                             include_reviews="reviews" in repair_fields,
+                            shared_seen=run_review_keys,
                         )
                         parsed.update(rating_data)
                     parsed["google_maps_url"] = page.url
@@ -300,6 +302,7 @@ async def scrape_google_maps_with_metrics(
         "max_maps_results_used": max_results or settings.max_maps_results,
     }
     logger.info("Starting Google Maps scrape for '%s'", query)
+    run_review_keys: set[str] = set()
 
     async with async_playwright() as pw:
         # Persistent context — cookies survive between runs, no repeat consent
@@ -376,6 +379,7 @@ async def scrape_google_maps_with_metrics(
                 metrics=metrics,
                 cancel_check=cancel_check,
                 skip_reviews_for_with_website=skip_reviews_for_with_website,
+                run_review_keys=run_review_keys,
             )
 
         except asyncio.CancelledError:
@@ -404,6 +408,7 @@ async def _scroll_and_collect(
     metrics: Dict[str, Any],
     cancel_check: Optional[Callable[[], Awaitable[None]]] = None,
     skip_reviews_for_with_website: bool = False,
+    run_review_keys: Optional[set] = None,
 ) -> List[Dict[str, Any]]:
     """Scroll the feed and collect visible cards as Google Maps virtualizes them."""
     feed = page.locator("div[role='feed']")
@@ -437,6 +442,7 @@ async def _scroll_and_collect(
             metrics,
             cancel_check=cancel_check,
             skip_reviews_for_with_website=skip_reviews_for_with_website,
+            run_review_keys=run_review_keys,
         )
         added_count = len(listings) - before_count
         logger.info(
@@ -479,6 +485,7 @@ async def _scroll_and_collect(
             metrics,
             cancel_check=cancel_check,
             skip_reviews_for_with_website=skip_reviews_for_with_website,
+            run_review_keys=run_review_keys,
         )
         logger.info(
             "Collected %d new businesses in final pass (%d total).",
@@ -508,6 +515,7 @@ async def _extract_visible_articles(
     metrics: Dict[str, Any],
     cancel_check: Optional[Callable[[], Awaitable[None]]] = None,
     skip_reviews_for_with_website: bool = False,
+    run_review_keys: Optional[set] = None,
 ) -> None:
     """Extract currently mounted article cards and append unseen businesses."""
     article_locator = page.locator("div[role='article']")
@@ -542,6 +550,11 @@ async def _extract_visible_articles(
             metrics["cards_attempted"] += 1
 
             logger.info("Opening Google Maps result card %s/%s.", i + 1, count)
+            try:
+                if await page.locator("div[data-review-id]").count():
+                    await _close_reviews_panel(page)
+            except Exception:
+                pass
             await article.click()
             await page.wait_for_timeout(500)
 
@@ -595,8 +608,16 @@ async def _extract_visible_articles(
                 )
             else:
                 logger.info("Fetching Google rating and reviews for %s.", name)
-                rating_data = await _extract_rating_and_reviews(page, business_name=name)
+                rating_data = await _extract_rating_and_reviews(
+                    page, business_name=name, shared_seen=run_review_keys
+                )
                 parsed.update(rating_data)
+                settled_rating = await _extract_average_rating(page)
+                if settled_rating is not None:
+                    parsed["google_rating"] = settled_rating
+                settled_count = await _extract_review_count(page)
+                if settled_count is not None:
+                    parsed["google_review_count"] = settled_count
                 logger.info(
                     "Fetched Google rating/reviews for %s: rating=%s total_reviews=%s fetched_reviews=%s.",
                     name,
@@ -735,6 +756,7 @@ async def _extract_rating_and_reviews(
     max_reviews: int = 9,
     business_name: str = "",
     include_reviews: bool = True,
+    shared_seen: Optional[set] = None,
 ) -> Dict[str, Any]:
     """Best-effort extraction of the listing's average rating and visible reviews."""
     result: Dict[str, Any] = {
@@ -750,6 +772,7 @@ async def _extract_rating_and_reviews(
             max_reviews=max_reviews,
             business_name=business_name,
             total_review_count=result["google_review_count"],
+            shared_seen=shared_seen,
         )
     return result
 
@@ -815,6 +838,7 @@ async def _extract_customer_reviews(
     max_reviews: int = 9,
     business_name: str = "",
     total_review_count: Optional[int] = None,
+    shared_seen: Optional[set] = None,
 ) -> List[Dict[str, Any]]:
     opened_reviews = False
     business_label = business_name or "selected business"
@@ -845,7 +869,7 @@ async def _extract_customer_reviews(
         logger.info("[Maps Reviews] Failed opening reviews panel for %s: %s", business_label, exc)
 
     reviews: List[Dict[str, Any]] = []
-    seen: set[str] = set()
+    seen: set[str] = shared_seen if shared_seen is not None else set()
     seen_ids: set[str] = set()
     max_visible = 0
     try:
@@ -1166,7 +1190,29 @@ def _parse_review_count(text: Optional[str]) -> Optional[int]:
 
 
 async def _article_card_key(article: Locator) -> str:
-    """Fingerprint a result card before clicking so old cards are not retried."""
+    """Fingerprint a result card before clicking so old cards are not retried.
+
+    Prefers the card's own name (stable across scroll passes); falls back
+    to full card text, which can vary (ratings, snippets, hours) and cause
+    re-processing. Name-only collisions resolve post-parse via
+    _listing_key and at persist by business name.
+    """
+    try:
+        label = await article.get_attribute("aria-label", timeout=1_000)
+        key = re.sub(r"\s+", " ", label or "").strip().lower()
+        if key:
+            return f"name:{key}"
+    except Exception:
+        pass
+    try:
+        heading = article.locator('[role="heading"], h3').first
+        if await heading.count():
+            name = await heading.inner_text(timeout=1_000)
+            key = re.sub(r"\s+", " ", name or "").strip().lower()
+            if key:
+                return f"name:{key}"
+    except Exception:
+        pass
     try:
         text = await article.inner_text(timeout=1_500)
     except Exception:

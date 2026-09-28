@@ -759,6 +759,38 @@ def _campaign_with_lead_derived_maps_stats(campaign: dict, leads: list[dict]) ->
     }
 
 
+def _merge_lead_sync_results(
+    campaign_id: str, lead_docs: list, synced: dict
+) -> tuple[dict, dict]:
+    """Apply threaded sync outcomes serially.
+
+    Returns (lead_notion_ids, counts). Firestore writes stay on the
+    calling thread; only the Notion API calls ran concurrently.
+    """
+    lead_notion_ids: dict[str, str] = {}
+    counts = {"leads_synced": 0, "skipped": 0}
+    for lead in lead_docs:
+        lead_id = lead["id"]
+        if lead_id not in synced:
+            continue
+        notion_page_id = synced[lead_id]
+        if notion_page_id:
+            update_document(LEADS, lead_id, {"notion_page_id": notion_page_id})
+            counts["leads_synced"] += 1
+            logger.info(
+                "[Notion Sync] Campaign %s: lead %s synced (%s).",
+                campaign_id,
+                lead_id,
+                notion_page_id,
+            )
+        else:
+            counts["skipped"] += 1
+            logger.warning("[Notion Sync] Campaign %s: lead %s sync skipped.", campaign_id, lead_id)
+        if notion_page_id:
+            lead_notion_ids[lead_id] = notion_page_id
+    return lead_notion_ids, counts
+
+
 def _sync_campaign_to_notion(
     campaign_id: str,
     campaign: dict,
@@ -861,34 +893,38 @@ def _sync_campaign_to_notion(
                 notion_page_id,
             )
             response.already_synced += 1
-        else:
-            logger.info(
-                "[Notion Sync] Campaign %s: syncing lead %s (%d/%d): %s",
-                campaign_id,
-                lead_id,
-                index,
-                total_leads,
-                lead.get("business_name") or "",
-            )
-            notion_page_id = notion.sync_lead(
-                lead_id,
-                lead,
-                campaign_notion_page_id=campaign_notion_page_id,
-            )
-            if notion_page_id:
-                update_document(LEADS, lead_id, {"notion_page_id": notion_page_id})
-                response.leads_synced += 1
-                logger.info(
-                    "[Notion Sync] Campaign %s: lead %s synced (%s).",
-                    campaign_id,
-                    lead_id,
-                    notion_page_id,
+    to_sync = [
+        lead for lead in lead_docs if force or not lead.get("notion_page_id")
+    ]
+    synced: dict[str, str | None] = {}
+    if to_sync:
+        from concurrent.futures import ThreadPoolExecutor
+
+        logger.info(
+            "[Notion Sync] Campaign %s: syncing %d leads on 3 lanes.",
+            campaign_id,
+            len(to_sync),
+        )
+        with ThreadPoolExecutor(max_workers=3) as pool:
+            pending = [
+                (
+                    lead,
+                    pool.submit(
+                        notion.sync_lead,
+                        lead["id"],
+                        lead,
+                        campaign_notion_page_id=campaign_notion_page_id,
+                    ),
                 )
-            else:
-                response.skipped += 1
-                logger.warning("[Notion Sync] Campaign %s: lead %s sync skipped.", campaign_id, lead_id)
-        if notion_page_id:
-            lead_notion_ids[lead_id] = notion_page_id
+                for lead in to_sync
+            ]
+            for lead, future in pending:
+                synced[lead["id"]] = future.result()
+    lead_notion_ids, sync_counts = _merge_lead_sync_results(
+        campaign_id, lead_docs, synced
+    )
+    response.leads_synced += sync_counts["leads_synced"]
+    response.skipped += sync_counts["skipped"]
 
     report_notion_ids: dict[str, str] = {}
     for lead in lead_docs:

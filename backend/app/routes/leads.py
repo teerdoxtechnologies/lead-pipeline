@@ -315,6 +315,7 @@ def _serialise_lead(doc: dict) -> LeadResponse:
         needs_website=bool(doc.get("needs_website", False)),
         generated_website_slug=doc.get("generated_website_slug"),
         generated_website_status=doc.get("generated_website_status"),
+        generated_website_url=doc.get("generated_website_url"),
         google_listing_images=doc.get("google_listing_images") or [],
         google_listing_videos=doc.get("google_listing_videos") or [],
         created_at=doc.get("created_at"),

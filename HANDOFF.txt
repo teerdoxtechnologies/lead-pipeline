@@ -1,5 +1,5 @@
 Lead Pipeline / Agency Scraper Handoff
-Last updated: 2026-09-25
+Last updated: 2026-09-30
 
 Important operating rule
 ------------------------
@@ -2637,3 +2637,51 @@ Operational gotchas:
   --reload does not cover app/workers/.
 - Windows-side `git push` gets 403; push from WSL where gh is authed as
   teerdoxtechnologies. Windows git credential is ezeaniiandrew.
+
+Coolify hosting scaffold (2026-09-30, UNCOMMITTED — same commit as code rule
+applies when this is committed):
+- Hosting decision with user: Docker Compose on Coolify. Coolify's edge is
+  Traefik, so there is NO nginx layer: one domain routes to the `api`
+  service, which serves the React console AND /api + /health + /preview +
+  /audit on that single origin (no CORS changes needed).
+- Railpack was evaluated and rejected for this repo: one railpack.json = one
+  service/startCommand, but we need api+worker+beat+redis; a Dockerfile gives
+  deterministic Playwright/Chromium setup. Coolify labels Railpack Beta
+  anyway (Nixpacks stable).
+- New files (all at repo root unless noted):
+  - backend/Dockerfile — multi-stage. Stage 1 (node:22-bookworm-slim,
+    pnpm 12.4.1 via corepack) builds frontend/dist. Stage 2
+    (mcr.microsoft.com/playwright/python:v1.50.0-jammy, ships Chromium +
+    OS deps) pip-installs backend/requirements.txt, copies backend/app and
+    the dist into ./static. Build context is the REPO ROOT
+    (docker build -f backend/Dockerfile .); no --reload; honors $PORT.
+  - docker-compose.yml — redis (7-alpine, healthchecked) + api + worker
+    (celery --pool=solo, as local) + beat from the one image; named volumes
+    redis-data/sites/exports-data; ./backend/.env loaded only if present
+    (required: false). Compose `command` uses $${PORT:-8000} ($$ so the
+    container shell, not compose, expands it at runtime).
+  - .dockerignore — keeps .env, firebase-service-account/credentials/token
+    json, .venv, node_modules, websites/, logs/exports out of the image.
+- backend/app/main.py: new serve_frontend catch-all GET /{full_path:path}
+  with SPA fallback to ./static/index.html. Deliberately LAST in the file so
+  /api/*, /health, /docs, /preview, /audit/* keep precedence; reserved
+  prefixes return JSON 404 (never index.html); path-traversal guarded via
+  resolve().relative_to(). No-op locally when ./static is absent
+  ("Frontend not built").
+- Bug caught during validation: the catch-all initially sat above the
+  /health definition and shadowed it (Starlette matches in order) — /health
+  returned 404 while / served the SPA. Fixed by moving the block to end of
+  file. If backend routes ever 404 oddly, check route definition order.
+- Verification performed (Docker Desktop 29.8.1, WSL integration):
+  docker compose config OK; image builds OK; runtime smoke OK —
+  /health 200, / 200 SPA, /campaigns 200 SPA fallback, /docs 200,
+  /api/nonexistent-xyz JSON 404, worker connects to redis and goes ready,
+  beat starts. Stack taken down afterwards; images remain locally.
+- Coolify deploy notes: point domain at `api`; set
+  BASE_URL=https://<domain> plus existing secrets in env UI. JSON key files
+  are NOT in the image by design — provide via storage and update
+  FIREBASE_SERVICE_ACCOUNT_PATH / GMAIL_*_PATH. `websites/publish`
+  (git commit+push to the Vercel repo) will fail on Coolify until that flow
+  gets git creds; previews, audits, exports work regardless.
+- Standing instruction from user (2026-09-30): always update HANDOFF.txt in
+  the same commit as the code it describes — no separate reminder needed.

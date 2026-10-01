@@ -1,0 +1,32 @@
+# Build context is the repo root (backend/Dockerfile reads ./frontend too).
+# Keep secrets, local state, and heavy dirs out of the image.
+.git
+.gitattributes
+**/.venv
+**/__pycache__
+**/*.pyc
+**/*.pyo
+**/*.pyd
+.env
+**/.env
+firebase-service-account.json
+**/firebase-service-account.json
+credentials.json
+**/credentials.json
+token.json
+**/token.json
+user_data/
+logs/
+**/logs/
+*.log
+exports/
+**/exports/
+# Generated sites + templates live in the sibling `websites/` repo and are
+# provided at runtime via the `sites` volume, not baked into the image.
+websites/
+*.bundle
+frontend/node_modules/
+frontend/dist/
+playwright-report/
+celerybeat-schedule*
+.vscode/

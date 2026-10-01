@@ -1,0 +1,102 @@
+name: lead-pipeline
+
+# Coolify: deploy this file as a Docker Compose application. Traefik (managed
+# by Coolify) terminates TLS and routes your domain to the `api` service, which
+# serves the React console AND /api + /health + /preview + /audit on one domain.
+# No nginx, no CORS changes needed.
+#
+# Local parity: `docker compose up --build`, then open http://localhost:8000.
+# The console, API docs (/docs), and health (/health) are all on that origin.
+#
+# Secrets are NEVER baked into the image (.dockerignore excludes .env and all
+# *-service-account/credentials/token json). Locally they load from
+# ./backend/.env (optional, gitignored). On Coolify, paste the same variables
+# into the environment UI and provide the JSON key files via persistent
+# storage, updating FIREBASE_SERVICE_ACCOUNT_PATH / GMAIL_*_PATH accordingly.
+# Required on Coolify: BASE_URL=https://<your-domain> (live site/report URLs
+# and CORS), REDIS_URL is already wired to the bundled redis service.
+
+x-backend-build: &backend-build
+  context: .
+  dockerfile: backend/Dockerfile
+
+x-backend-env: &backend-env
+  REDIS_URL: redis://redis:6379/0
+  PORT: "8000"
+
+x-backend-volumes: &backend-volumes
+  - sites:/websites
+  - exports-data:/app/exports
+
+services:
+  redis:
+    image: redis:7-alpine
+    command: redis-server --appendonly yes
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  api:
+    build: *backend-build
+    # $$ escapes compose interpolation so the container shell expands PORT at runtime.
+    command: ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port $${PORT:-8000}"]
+    env_file:
+      - path: ./backend/.env
+        required: false
+    environment: *backend-env
+    ports:
+      # Local access. On Coolify, Traefik routes your domain to this service;
+      # the mapping is harmless but can be removed if you prefer pure Traefik routing.
+      - "8000:8000"
+    depends_on:
+      redis:
+        condition: service_healthy
+    volumes: *backend-volumes
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import os,sys,urllib.request; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:'+os.environ.get('PORT','8000')+'/health',timeout=4).status==200 else 1)\""]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    restart: unless-stopped
+
+  worker:
+    build: *backend-build
+    command: ["celery", "-A", "app.workers.celery_app:celery_app", "worker", "--loglevel=info", "--pool=solo"]
+    env_file:
+      - path: ./backend/.env
+        required: false
+    environment: *backend-env
+    depends_on:
+      redis:
+        condition: service_healthy
+    volumes: *backend-volumes
+    restart: unless-stopped
+
+  beat:
+    build: *backend-build
+    command: ["celery", "-A", "app.workers.celery_app:celery_app", "beat", "--loglevel=info"]
+    env_file:
+      - path: ./backend/.env
+        required: false
+    environment: *backend-env
+    depends_on:
+      redis:
+        condition: service_healthy
+    volumes: *backend-volumes
+    restart: unless-stopped
+
+volumes:
+  redis-data:
+  # /websites == ../websites from /app: STATIC_SITES_REPO_ROOT,
+  # GENERATED_WEBSITES_ROOT, AUDIT_REPORTS_ROOT defaults resolve here.
+  # NOTE: the sibling `websites/` Vercel repo is NOT in the image; `publish`
+  # (commit+push to Vercel) needs git creds + remote and will fail on Coolify
+  # until that flow is reworked. Previews, audits, and exports work regardless.
+  sites:
+  exports-data:

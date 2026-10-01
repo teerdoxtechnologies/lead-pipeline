@@ -13,10 +13,11 @@ from __future__ import annotations
 import logging
 import sys
 import time
+from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import Response
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pythonjsonlogger import jsonlogger
 
@@ -186,3 +187,45 @@ async def on_startup() -> None:
 async def health_check():
     """Simple liveness probe."""
     return {"status": "ok", "service": "agency-scraper"}
+
+
+# ---------------------------------------------------------------------------
+# Frontend console (same domain, no CORS/proxy)
+# ---------------------------------------------------------------------------
+# The Docker image copies the Vite build to ./static. This catch-all is
+# deliberately LAST so every backend route above (/api/*, /health, /docs,
+# /preview, /audit/*) keeps precedence and the React SPA handles the rest,
+# including deep links like /campaigns/:id. Local dev without a build is
+# unaffected (API-only responses, as before).
+
+FRONTEND_DIST = Path(__file__).resolve().parent.parent / "static"
+# Backend-owned prefixes: if one of these reaches the fallback it matched
+# nothing, so return a real 404 instead of index.html.
+_SPA_RESERVED = ("api/", "docs", "redoc", "openapi.json", "health", "preview", "audit")
+
+
+@app.get("/{full_path:path}", include_in_schema=False)
+async def serve_frontend(full_path: str):
+    """Serve the bundled React console with SPA fallback."""
+    if not FRONTEND_DIST.is_dir():
+        return JSONResponse(status_code=404, content={"detail": "Frontend not built"})
+    if full_path.startswith(_SPA_RESERVED) or full_path in {
+        "docs",
+        "redoc",
+        "openapi.json",
+        "health",
+    }:
+        return JSONResponse(status_code=404, content={"detail": "Not found"})
+    if full_path:
+        candidate = FRONTEND_DIST / full_path
+        try:
+            resolved = candidate.resolve()
+            resolved.relative_to(FRONTEND_DIST.resolve())
+        except (ValueError, OSError):
+            return JSONResponse(status_code=404, content={"detail": "Not found"})
+        if resolved.is_file():
+            return FileResponse(resolved)
+    index = FRONTEND_DIST / "index.html"
+    if index.is_file():
+        return FileResponse(index)
+    return JSONResponse(status_code=404, content={"detail": "Frontend not built"})
